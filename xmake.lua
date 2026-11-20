@@ -37,6 +37,12 @@ else
     add_requires("levilamina", {configs = {target_type = "server"}})
 end
 
+-- levilamina → cpr[ssl=y] → libcurl{libssh2=true, zlib=true} → zlib
+-- libssh2 预编译包(vc14.42)链接的是 zlib 1.3.1，而 libcurl 的 zlib 依赖默认解析 latest(1.4)，
+-- 导致 ninja 引用「未安装的 zlib 1.3.1 路径」而失败（CI 全新缓存必现）。
+-- 把 libcurl 的 zlib 也锁到 1.3.1，使两条依赖链版本一致。
+add_requireconfs("levilamina.cpr.libcurl.zlib", {version = "1.3.1"})
+
 add_requires("levibuildscript")
 
 if not has_config("vs_runtime") then
