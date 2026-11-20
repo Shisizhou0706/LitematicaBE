@@ -38,10 +38,10 @@ else
 end
 
 -- levilamina → cpr[ssl=y] → libcurl{libssh2=true, zlib=true} → zlib
--- libssh2 预编译包(vc14.42)链接的是 zlib 1.3.1，而 libcurl 的 zlib 依赖默认解析 latest(1.4)，
--- 导致 ninja 引用「未安装的 zlib 1.3.1 路径」而失败（CI 全新缓存必现）。
--- 把 libcurl 的 zlib 也锁到 1.3.1，使两条依赖链版本一致。
-add_requireconfs("levilamina.cpr.libcurl.zlib", {version = "1.3.1"})
+-- libssh2 预编译包(vc14.42)链接的是 zlib 1.3.1，而 libcurl 的 zlib 依赖被解析成
+-- latest(1.4)，导致 libcurl 源码构建时 ninja 引用「未安装的 zlib 1.3.1」路径。
+-- add_requireconfs 无法锁定 cpr 的(动态 on_load 注入的) libcurl 依赖，因此改为在
+-- CI 的 build.yml 里预装 zlib 1.3.1（见 Warm zlib 1.3.1 step）。
 
 add_requires("levibuildscript")
 
