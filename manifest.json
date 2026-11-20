@@ -3,5 +3,12 @@
     "entry": "${modFile}",
     "version": "${modVersion}",
     "type": "native",
-    "platform": "${modPlatform}"
+    "platform": "${modPlatform}",
+    "author": "LitematicaBE",
+    "description": "Server-side Litematica projection for Minecraft Bedrock: renders schematics as client-side fake blocks, leaving the world untouched.",
+    "dependencies": [
+        {
+            "name": "HologramLib"
+        }
+    ]
 }

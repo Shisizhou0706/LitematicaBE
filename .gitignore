@@ -549,3 +549,25 @@ fabric.properties
 # Project specific ignores
 /.idea/
 /bin/
+
+# HologramLib 前置：本地提供，不入库（见 README「前置」一节）
+/hologramlib/
+
+# 运行时产物
+/logs/
+/exports/
+/schematics/
+/mega_schematics/
+
+# Python 离线工具链
+/.venv/
+/tools/.venv/
+__pycache__/
+*.py[cod]
+/.pytest_cache/
+/tools/.mypy_cache/
+/tools/dist/
+*.egg-info/
+
+# 由 tools/ 生成的数据（映射表、校验快照），以构建产物形式存在
+/resources/data/generated/
