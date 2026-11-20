@@ -29,8 +29,40 @@ jobs:
       - run: |
           xmake repo -u
 
+      # 同 build.yml：预装 zlib 1.3.1，修复 libcurl 源码构建对 libssh2 预编译 ABI 的依赖
+      - name: Warm zlib 1.3.1 (libcurl/libssh2 ABI)
+        shell: pwsh
+        run: |
+          $probe = Join-Path $env:RUNNER_TEMP 'zlib-warm'
+          New-Item -ItemType Directory -Force -Path $probe | Out-Null
+          'add_requires("zlib 1.3.1")', 'target("zlib_probe")', '    set_kind("static")', '    add_files("dummy.cpp")', '    add_packages("zlib")' |
+            Set-Content -Path (Join-Path $probe 'xmake.lua') -Encoding UTF8
+          'int dummy() { return 0; }' | Set-Content -Path (Join-Path $probe 'dummy.cpp') -Encoding UTF8
+          Push-Location $probe
+          xmake f -y -p windows -a x64 -m release
+          xmake -y
+          Pop-Location
+
       - run: |
           xmake f -c -a x64 -m release -p windows -y --levilamina_version=1.9.9
+
+      # 同 build.yml：rapidjson 1.1.0 的 const 成员赋值在 clang 22 下报错
+      - name: Patch rapidjson const-assign (clang 22)
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:USERPROFILE 'AppData\Local\.xmake\packages\r\rapidjson'
+          $orig = 'GenericStringRef& operator=(const GenericStringRef& rhs) { s = rhs.s; length = rhs.length; }'
+          $patched = $false
+          Get-ChildItem $root -Recurse -Filter 'document.h' -ErrorAction SilentlyContinue | ForEach-Object {
+            $t = Get-Content $_.FullName -Raw
+            if ($t.Contains($orig)) {
+              $t = $t.Replace($orig, 'GenericStringRef& operator=(const GenericStringRef& rhs) { (void)rhs; return *this; }')
+              Set-Content -Path $_.FullName -Value $t -NoNewline -Encoding utf8
+              $patched = $true
+              Write-Host "patched: $($_.FullName)"
+            }
+          }
+          if (-not $patched) { Write-Host 'rapidjson: no unpatched document.h found (already patched?)' }
 
       - run: |
           xmake -w -y
