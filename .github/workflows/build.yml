@@ -66,6 +66,27 @@ jobs:
         run: |
           xmake f -c -a x64 -m release -p windows -v -y --levilamina_version=1.9.9
 
+      # rapidjson 1.1.0 的 GenericStringRef::operator= 给 const 成员 length 赋值，
+      # clang 22 直接报 "cannot assign to non-static data member 'length'"。
+      # MSVC 因模板延迟诊断不报（本地 MSVC 通过），CI 用 clang-cl 必现。
+      # 这里把该 operator= 替换为空实现（与本地缓存中的补丁一致）。
+      - name: Patch rapidjson const-assign (clang 22)
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:USERPROFILE 'AppData\Local\.xmake\packages\r\rapidjson'
+          $orig = 'GenericStringRef& operator=(const GenericStringRef& rhs) { s = rhs.s; length = rhs.length; }'
+          $patched = $false
+          Get-ChildItem $root -Recurse -Filter 'document.h' -ErrorAction SilentlyContinue | ForEach-Object {
+            $t = Get-Content $_.FullName -Raw
+            if ($t.Contains($orig)) {
+              $t = $t.Replace($orig, 'GenericStringRef& operator=(const GenericStringRef& rhs) { (void)rhs; return *this; }')
+              Set-Content -Path $_.FullName -Value $t -NoNewline -Encoding utf8
+              $patched = $true
+              Write-Host "patched: $($_.FullName)"
+            }
+          }
+          if (-not $patched) { Write-Host 'rapidjson: no unpatched document.h found (already patched?)' }
+
       - name: Build
         run: |
           xmake -v -y
