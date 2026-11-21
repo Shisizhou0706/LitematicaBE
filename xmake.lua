@@ -45,6 +45,9 @@ end
 
 add_requires("levibuildscript")
 
+-- gzip 解压：BDS 的 Core::Compression::Zlib 没有导出符号，用 miniz 单库解压。
+add_requires("miniz")
+
 if not has_config("vs_runtime") then
     set_runtimes("MD")
 end
@@ -119,6 +122,12 @@ target("LitematicaBE")
     end
 
     add_packages("levilamina")
+    add_packages("miniz")
+
+    -- 内置上传服务用 Winsock。
+    if is_plat("windows") then
+        add_syslinks("ws2_32")
+    end
 
     add_headerfiles("src/**.h")
     add_files("src/**.cpp")
@@ -147,25 +156,39 @@ target("LitematicaBE")
         end
 
         -- 批量编码器（holo_core_encode_update_subchunk_blocks / holo_free）只在 holo_core.dll 里，
-        -- HologramLib.lib 没有这些导入符号。按发布约定随插件分发这个 DLL。
+        -- HologramLib.lib 没有这些导入符号。按发布约定随插件分发这个 DLL；
+        -- 同时把运行期映射表放进 data/，插件启动时从模组目录读。
         after_build(function (target)
             local src = hl_dir .. "/holo_core.dll"
-            if not os.isfile(src) then
-                print("[LitematicaBE] warning: " .. src .. " not found, release will lack the batch encoder")
-                return
-            end
-            local targets = {
-                path.join(target:targetdir(), "holo_core.dll"),
-                path.join(os.projectdir(), "bin", target:name(), "holo_core.dll"),
-            }
-            for _, dst in ipairs(targets) do
-                local dir = path.directory(dst)
-                if dir and dir ~= "" then
-                    os.mkdir(dir)
+            if os.isfile(src) then
+                local targets = {
+                    path.join(target:targetdir(), "holo_core.dll"),
+                    path.join(os.projectdir(), "bin", target:name(), "holo_core.dll"),
+                }
+                for _, dst in ipairs(targets) do
+                    local dir = path.directory(dst)
+                    if dir and dir ~= "" then
+                        os.mkdir(dir)
+                    end
+                    os.cp(src, dst)
                 end
-                os.cp(src, dst)
+                print("[LitematicaBE] bundled holo_core.dll next to the plugin")
+            else
+                print("[LitematicaBE] warning: " .. src .. " not found, release will lack the batch encoder")
             end
-            print("[LitematicaBE] bundled holo_core.dll next to the plugin")
+
+            -- 运行期数据表：映射表 + 遮挡白名单（resources/data/*.json，不含 source/ 与 generated/）
+            local dataFiles = os.files(path.join(os.projectdir(), "resources", "data", "*.json"))
+            if #dataFiles > 0 then
+                local dataDst = path.join(os.projectdir(), "bin", target:name(), "data")
+                os.mkdir(dataDst)
+                for _, file in ipairs(dataFiles) do
+                    os.cp(file, path.join(dataDst, path.filename(file)))
+                end
+                print("[LitematicaBE] copied runtime data -> " .. dataDst)
+            else
+                print("[LitematicaBE] warning: no resources/data/*.json (run lit-tools mapgen / occlusion)")
+            end
         end)
     else
         add_defines("LITEMATICABE_WITH_HOLOGRAMLIB=0")

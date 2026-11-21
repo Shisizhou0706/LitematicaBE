@@ -1,12 +1,18 @@
 #include "LitematicaBE/LitematicaBE.h"
 
 #include "LitematicaBE/Version.h"
-#include "LitematicaBE/command/ProbeCommand.h"
+#include "LitematicaBE/core/util/TextEncoding.h"
+#include "LitematicaBE/command/LitCommand.h"
 #include "LitematicaBE/hologram/HologramFacade.h"
+#include "LitematicaBE/mapping/GhostMap.h"
+#include "LitematicaBE/ghost/DispatchQueue.h"
+#include "LitematicaBE/ghost/ProjectionManager.h"
+#include "LitematicaBE/web/UploadServer.h"
 
 #include "ll/api/mod/RegisterHelper.h"
 
 #include <filesystem>
+#include <stdexcept>
 #include <system_error>
 
 namespace litematicabe {
@@ -29,13 +35,22 @@ bool LitematicaBE::load() {
     std::error_code ec;
     std::filesystem::create_directories(self.getDataDir(), ec);
     if (ec) {
-        logger.error("failed to create data dir: {} ({})", self.getDataDir().string(), ec.message());
+        logger.error("failed to create data dir: {} ({})", util::toUtf8(self.getDataDir()), ec.message());
         return false;
     }
     std::filesystem::create_directories(self.getConfigDir(), ec);
     if (ec) {
-        logger.error("failed to create config dir: {} ({})", self.getConfigDir().string(), ec.message());
+        logger.error("failed to create config dir: {} ({})", util::toUtf8(self.getConfigDir()), ec.message());
         return false;
+    }
+
+    // 投影文件目录：/lit load xxx.litematic 的相对路径就落在这里。
+    auto const schematicsDir = self.getModDir() / "schematics";
+    std::filesystem::create_directories(schematicsDir, ec);
+    if (ec) {
+        logger.warn("failed to create schematics dir: {} ({})", util::toUtf8(schematicsDir), ec.message());
+    } else {
+        logger.info("put .litematic/.mcstructure files here: {}", util::toUtf8(schematicsDir));
     }
 
     logger.info("LitematicaBE loaded");
@@ -60,11 +75,47 @@ bool LitematicaBE::enable() {
     }
 
     command::registerLitCommand();
-    logger.info("command /lit registered (probe / send / batch)");
+    logger.info("command /lit registered (probe / send / batch / info / load)");
+
+    // 映射表是投影加载的前提；启动时就加载，失败原因能在日志里直接看到。
+    auto& ghostMap = mapping::GhostMap::getInstance();
+    if (ghostMap.ensureLoaded()) {
+        logger.info("ghost map loaded: {} block entries", ghostMap.stats().blocks);
+    } else {
+        logger.warn("ghost map NOT loaded ({}): /lit load will fail", ghostMap.lastError());
+    }
+
+    // 内置上传页：默认只监听 127.0.0.1，token 在 config/upload.json。
+    auto& upload = web::UploadServer::getInstance();
+    if (upload.start()) {
+        logger.info("upload page: {} (token in config/upload.json)", upload.url());
+    } else {
+        logger.info("upload page disabled: {}", upload.lastError());
+    }
+
+    // 按 tick 预算发包的队列：LevelTickEvent 在服务端并不发布（注册就会抛异常，
+    // 而且会让后面的初始化整段跳过），load/clear 已经改成同步发送，这里不再启动。
+    // 需要限速时再换成不依赖 tick 的驱动方式。
+
+    // 方块变化监听：玩家把投影格挖掉后，把 ghost 补回去。
+    // 事件注册失败不能中断 enable（否则插件看起来"启用"但功能全无）。
+    try {
+        ghost::ProjectionManager::getInstance().start();
+        logger.info("projection manager listeners registered");
+    } catch (std::exception const& e) {
+        logger.error("projection manager listeners FAILED: {}", e.what());
+    } catch (...) {
+        logger.error("projection manager listeners FAILED: unknown exception");
+    }
     return true;
 }
 
 bool LitematicaBE::disable() {
+    try {
+        ghost::ProjectionManager::getInstance().stop();
+    } catch (...) {
+    }
+    web::UploadServer::getInstance().stop();
     getSelf().getLogger().info("LitematicaBE disabled");
     return true;
 }

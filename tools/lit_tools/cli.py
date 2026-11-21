@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import addon, mapping, paths, version
+from . import addon, fixture, mapping, mapgen, occlusion, paths, version
 
 
 def _cmd_version(_: argparse.Namespace) -> int:
@@ -51,6 +51,49 @@ def _cmd_mapping(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_mapgen(_: argparse.Namespace) -> int:
+    try:
+        target, report = mapgen.write()
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"[x] {exc}", file=sys.stderr)
+        return 1
+    try:
+        shown = target.relative_to(paths.repo_root())
+    except ValueError:
+        shown = target
+    print(f"[ok] 已生成 {shown}")
+    print(f"     方块条目 {report.blocks}（含状态树 {report.with_states}）")
+    print(f"     叶子 {report.leaves}，覆盖深度 {sorted(report.depth_histogram)}")
+    return 0
+
+
+def _cmd_fixture(_: argparse.Namespace) -> int:
+    litematic_path, expected_path, expected = fixture.write()
+    for path in (litematic_path, expected_path):
+        try:
+            shown = path.relative_to(paths.repo_root())
+        except ValueError:
+            shown = path
+        print(f"[ok] {shown}")
+    print(f"     尺寸 {expected['size']}，非空气方块 {len(expected['blocks'])}，bits {expected['bits']}")
+    return 0
+
+
+def _cmd_occlusion(_: argparse.Namespace) -> int:
+    target, report = occlusion.write()
+    try:
+        shown = target.relative_to(paths.repo_root())
+    except ValueError:
+        shown = target
+    print(f"[ok] 已生成 {shown}")
+    print(f"     Java 方块 {report.java_blocks} → 白名单 {report.transparent} 个")
+    top = report.by_rule.most_common(6)
+    print("     规则命中：" + "、".join(f"{rule}={count}" for rule, count in top))
+    for item in report.missing[:10]:
+        print(f"[!] {item}", file=sys.stderr)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lit_tools", description="LitematicaBE 离线工具链")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -63,6 +106,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub.add_parser("mapping", help="从 BP 生成 resources/data/generated/ghost_blocks.json").set_defaults(
         func=_cmd_mapping
+    )
+    sub.add_parser("mapgen", help="把 source/ghost_index.json 转成运行期 ghost_map.json 并校验").set_defaults(
+        func=_cmd_mapgen
+    )
+    sub.add_parser("fixture", help="生成 tests/fixtures 下的最小 .litematic 解析测例").set_defaults(
+        func=_cmd_fixture
+    )
+    sub.add_parser("occlusion", help="生成表面剔除用的遮挡白名单 resources/data/occlusion.json").set_defaults(
+        func=_cmd_occlusion
     )
     return parser
 

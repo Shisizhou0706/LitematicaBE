@@ -571,3 +571,10 @@ __pycache__/
 
 # 由 tools/ 生成的数据（映射表、校验快照），以构建产物形式存在
 /resources/data/generated/
+
+# 离线回归工程（tools/parse-check）的本地构建产物
+/tools/parse-check/build/
+/tools/parse-check/.xmake/
+
+# 文档目录
+/docs/

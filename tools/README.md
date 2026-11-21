@@ -20,8 +20,26 @@ python -m lit_tools mapping     # 生成 resources/data/generated/ghost_blocks.j
 | `version` | `src/LitematicaBE/Version.h` 的 `kVersion`、`xmake.lua` 的 `modVersion`、`lip.toml` 的 `version`、`CHANGELOG.md` 最新条目标题 | 发版会推出错误的版本号，`lip` 侧、打包出来的 `manifest.json` 与二进制三边不一致 |
 | `addon` | BP/RP manifest 版本一致；`blocks/*.json` 的 identifier 唯一且在 `lit:` 下；`material_instances` 引用的贴图都存在于 RP 的 `terrain_texture.json` | 运行期假方块变紫黑格或串块，日志里看不出来 |
 | `mapping` | 从 BP 枚举识别符与状态定义 | 映射层的输入缺失 |
+| `mapgen` | 旧 `source/ghost_index.json` → 运行期 `ghost_map.json`；校验所有 ghost 名都真实存在于 BP | 运行期状态串解析失败（映射到不存在的方块） |
+| `fixture` | 合成 `tests/fixtures/mini.litematic` + `.expected.json` | 解析器回归没有基准（配合 `tools/parse-check/` 使用） |
+| `occlusion` | 从 Java 方块清单生成遮挡白名单 `occlusion.json`（表面剔除用），并体检误判 | 表面剔除会把玻璃/楼梯旁边的面也剔掉（投影缺块） |
 
 `mapping` 的产物在 `resources/data/generated/` 下（已 gitignore）。需要固定版本时由发布流程打包，而不是提交进仓库。
+
+`mapgen` 的产物 `resources/data/ghost_map.json` **要入库**：它是运行期真正读的映射表，构建时会被复制到插件目录 `data/`。
+格式与维护流程见 [../docs/data-schema.md](../docs/data-schema.md)。
+
+## parse-check/
+
+`parse-check/` 是一个独立的 xmake 工程，把 `NbtTag.cpp` 与 `LitematicFile.cpp` 编成小 exe，
+对 `tests/fixtures/*.litematic` 做逐方块对拍（这两个源文件不依赖 LL/BDS 头文件）：
+
+```bash
+cd tools/parse-check
+xmake f -P . -y -p windows -a x64 -m release
+xmake -P . -y
+python check.py
+```
 
 ## build.ps1
 
