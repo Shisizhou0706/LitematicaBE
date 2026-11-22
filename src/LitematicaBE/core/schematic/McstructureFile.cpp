@@ -165,7 +165,10 @@ ReadError readMcstructure(std::filesystem::path const& file, McstructureFile& ou
         if (auto const* states = item->find("states"); states != nullptr && states->isCompound()) {
             entry.states.reserve(states->compound.size());
             for (auto const& [key, value] : states->compound) {
-                entry.states.emplace_back(stripNamespace(key), valueToString(value.get()));
+                // 键保留原样：Bedrock 结构文件里状态键混用两套命名空间
+            // （minecraft:cardinal_direction 与裸 upside_down_bit 并存），
+            // strip 掉会让放置时无法还原成注册表认的那一个。
+            entry.states.emplace_back(key, valueToString(value.get()));
             }
             std::sort(
                 entry.states.begin(),

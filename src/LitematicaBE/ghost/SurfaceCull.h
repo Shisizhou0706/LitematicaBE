@@ -14,6 +14,8 @@ struct PendingBlock {
     std::int32_t  z{};
     std::uint32_t runtimeId{};
     std::string   javaName;
+    /// 原始状态串（Java 或 Bedrock 口径，取自文件），真实放置时用。
+    std::string   state;
 };
 
 struct CullStats {

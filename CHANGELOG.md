@@ -64,6 +64,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 命令：`/lit projects`（列会话）、`/lit select <id>`（切换）、`/lit remove <id>`（收回并删除）；`layer/rotate/unload/resend` 作用于当前选中；
   - 方块 hook 改为 `requestRepaintAt` 分发到所有包含该坐标的会话；玩家进服/重生/传送/换维度时所有会话各自重发（会话外：`isDead` 翻转判重生 + 64 格位移判传送）；
   - 修复「加载第二个投影后失去对第一个的控制、重载区块后第一个消失」。
+- 阶段 H（真实放置）：
+  - 新命令 /lit place（只填空位）/ /lit replace（覆盖）/ /lit plan（干跑统计）/ /lit diag（环境诊断），都支持 <from> <to> 限定层；
+  - ProjectionSession 增加原始状态串调色板（Entry.paletteId → mPalette），.mcstructure 走原样、.litematic 走名称映射；
+  - 新增 mapping::PlaceResolve：候选链（原样 → java_bedrock.json → 规则变形 → 候选池近似 → 默认状态）+ Java 属性别名多套尝试 + 三级精度（原样/改名/仅默认状态），按状态串缓存；
+  - 新增 mapping::BlockStateText（状态串解析/构造，BlockStateResolve 与 PlaceResolve 共用）；
+  - 新工具 lit-tools placemap：从 VanillaBlockTypeIds.h 抽 1198 个 Bedrock 候选名 + 生成 48 条 Java→Bedrock 差异映射；
+  - 放置按 y→x→z 自下而上，setBlockAndRetainCompatibleBlockActor 写入，单次上限 20 万格，收尾抽样回读校验；
+  - 环境坑：本服务端 Level::getDimension() 恒返回空 weak_ptr，mRegions/mDimensions 读不出来（LL 头的结构布局与 BDS 不符），改用 Actor::getDimensionBlockSource()（MCFOLD）+ 运行时 hook 捕获 BlockSource；控制台放置因此要求至少一名玩家在线。
 - 阶段 F（中文路径崩溃修复）：
   - 根因：`std::filesystem::path{std::string}` 会按本地代码页（GBK/936）转换，游戏内聊天栏传来的是 UTF-8，
     中文文件名触发 `MultiByteToWideChar` 失败 → 抛 `std::system_error`（`ERROR_NO_UNICODE_TRANSLATION` / 0x459），

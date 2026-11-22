@@ -49,6 +49,9 @@ public:
     /// 玩家状态变化（进服/重生/传送/换维度）时，对所有会话补发当前显示层。
     void sendCachedTo(::Player& player);
 
+    /// 重新绘制所有会话的包围盒线框（`/lit box` 重新打开时用）。
+    void refreshWireframes();
+
     void start();
     void stop();
 
@@ -65,6 +68,8 @@ private:
     ProjectionManager() = default;
 
     void schedulePoll(std::int64_t delayMs);
+
+    void schedulePump(std::int64_t delayMs);
     void pollPlayers();
     [[nodiscard]] std::string nextLabel(std::string const& file) const;
 

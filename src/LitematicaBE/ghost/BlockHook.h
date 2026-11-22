@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+class BlockSource;
+
 namespace litematicabe::ghost {
 
 /// 方块变化的底层 hook。
@@ -15,5 +17,20 @@ void uninstallBlockChangedHook();
 
 [[nodiscard]] bool          blockHookInstalled();
 [[nodiscard]] [[nodiscard]] std::uint64_t blockSetCalls();
+
+/// 布置 BlockSource 捕获 hook。
+///
+/// @return **hook 是否挂上**（不代表已经捕获到实例）。世界还没加载 / 完全空闲时
+///         `BlockSource` 的函数不会被调用，所以「已布置但未捕获」是正常状态。
+bool installBlockSourceCapture();
+
+/// hook 当前是否挂着（诊断用）。
+bool blockSourceCaptureInstalled();
+
+/// 捕获到的 BlockSource；还没捕获到时返回 nullptr。
+::BlockSource* capturedBlockSource();
+
+/// 卸载捕获 hook（拿到之后就没必要继续挂着）。
+void stopBlockSourceCapture();
 
 } // namespace litematicabe::ghost

@@ -6,6 +6,7 @@
 #include "LitematicaBE/hologram/HologramFacade.h"
 #include "LitematicaBE/mapping/GhostMap.h"
 #include "LitematicaBE/ghost/DispatchQueue.h"
+#include "LitematicaBE/ghost/BlockHook.h"
 #include "LitematicaBE/ghost/ProjectionManager.h"
 #include "LitematicaBE/web/UploadServer.h"
 
@@ -51,6 +52,16 @@ bool LitematicaBE::load() {
         logger.warn("failed to create schematics dir: {} ({})", util::toUtf8(schematicsDir), ec.message());
     } else {
         logger.info("put .litematic/.mcstructure files here: {}", util::toUtf8(schematicsDir));
+    }
+
+    // 尽早挂上 BlockSource 捕获：世界加载时会大量调用 BlockSource 的虚函数，
+    // 挂得越早越可能在世界空闲（无玩家）时就拿到一个可用实例。
+    if (ghost::installBlockSourceCapture()) {
+        logger.info(
+            "block source capture armed (waits for world activity; console place still needs a player online)"
+        );
+    } else {
+        logger.warn("block source capture hook FAILED to install");
     }
 
     logger.info("LitematicaBE loaded");

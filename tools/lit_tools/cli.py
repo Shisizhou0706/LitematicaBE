@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import addon, fixture, mapping, mapgen, occlusion, paths, version
+from . import addon, fixture, mapping, mapgen, occlusion, paths, placemap, version
 
 
 def _cmd_version(_: argparse.Namespace) -> int:
@@ -94,6 +94,10 @@ def _cmd_occlusion(_: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_placemap(args: argparse.Namespace) -> int:
+    return placemap.main(['--header', str(args.header)] if args.header else [])
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lit_tools", description="LitematicaBE 离线工具链")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -113,6 +117,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("fixture", help="生成 tests/fixtures 下的最小 .litematic 解析测例").set_defaults(
         func=_cmd_fixture
     )
+    p_place = sub.add_parser("placemap", help="生成放置用的方块名数据（bedrock_names / java_bedrock）")
+    p_place.add_argument("--header", default=None, help="VanillaBlockTypeIds.h 路径")
+    p_place.set_defaults(func=_cmd_placemap)
     sub.add_parser("occlusion", help="生成表面剔除用的遮挡白名单 resources/data/occlusion.json").set_defaults(
         func=_cmd_occlusion
     )

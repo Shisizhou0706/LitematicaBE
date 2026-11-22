@@ -494,6 +494,29 @@ void resendAll(::CommandOutput& output) {
         mirror.cachedPackets
     );
 }
+void placeProjection(::CommandOutput& output, ::Player* player, int from, int to, bool overwrite) {
+    auto* session = ghost::ProjectionManager::getInstance().active();
+    if (session == nullptr) {
+        output.error("没有活动会话：先 /lit load <file> [x y z]");
+        return;
+    }
+    ghost::ProjectionSession::PlaceOptions options;
+    options.overwrite = overwrite;
+    session->place(output, player, from, to, options);
+}
+
+void planProjection(::CommandOutput& output, int from, int to) {
+    auto* session = ghost::ProjectionManager::getInstance().active();
+    if (session == nullptr) {
+        output.error("没有活动会话：先 /lit load <file> [x y z]");
+        return;
+    }
+    ghost::ProjectionSession::PlaceOptions options;
+    options.dryRun    = true;
+    options.clearGhost = false;
+    session->place(output, nullptr, from, to, options);
+}
+
 void listProjects(::CommandOutput& output) {
     ghost::ProjectionManager::getInstance().list(output);
 }

@@ -46,6 +46,13 @@ void listProjects(::CommandOutput& output);
 void selectProjection(::CommandOutput& output, int id);
 void removeProjection(::CommandOutput& output, int id, ::Player* player);
 
+/// `/lit place` / `/lit replace`：把投影方块**真实写入世界**。
+/// @param overwrite false 只填空位（遇到已有方块跳过），true 连非空气也覆盖。
+void placeProjection(::CommandOutput& output, ::Player* player, int from, int to, bool overwrite);
+
+/// /lit plan：干跑，只统计「哪些方块放得下 / 放不下」，不写世界。
+void planProjection(::CommandOutput& output, int from, int to);
+
 /// `/lit list`：列出插件目录 `schematics/` 下可用的投影文件。
 void listFiles(::CommandOutput& output);
 

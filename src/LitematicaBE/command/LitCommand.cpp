@@ -4,6 +4,9 @@
 #include "LitematicaBE/command/SchematicActions.h"
 
 #include "LitematicaBE/core/util/TextEncoding.h"
+#include "LitematicaBE/ghost/ProjectionManager.h"
+#include "LitematicaBE/ghost/Wireframe.h"
+#include "LitematicaBE/hologram/ShapeDrawer.h"
 
 #include "ll/api/command/CommandHandle.h"
 #include "ll/api/command/CommandRegistrar.h"
@@ -35,6 +38,11 @@ enum class LitAction : int {
     projects = 11,
     select   = 12,
     remove   = 13,
+    place    = 14,
+    replace  = 15,
+    diag     = 16,
+    plan     = 17,
+    box      = 18,
 };
 
 struct LitParams {
@@ -125,12 +133,59 @@ void runWithoutFile(::CommandOutput& output, ::CommandOrigin const& origin, LitA
     case LitAction::projects:
         schematic::listProjects(output);
         return;
+    case LitAction::diag:
+        probe::diagnose(output);
+        return;
+    case LitAction::plan: {
+        auto* session = ghost::ProjectionManager::getInstance().active();
+        if (session == nullptr) {
+            output.error("没有活动会话：先 /lit load <file> [x y z]");
+            return;
+        }
+        auto const bounds = session->bounds();
+        schematic::planProjection(output, bounds.from, bounds.to);
+        return;
+    }
     case LitAction::resend:
         schematic::resendAll(output);
         return;
+    case LitAction::box: {
+        auto& wireframe = ghost::Wireframe::getInstance();
+        if (wireframe.enabled()) {
+            wireframe.setEnabled(false);
+            output.success("包围盒线框：§c关§r（已收回，/lit box 再打开）");
+            return;
+        }
+        wireframe.setEnabled(true);
+        auto& drawer = hologram::ShapeDrawer::getInstance();
+        if (!drawer.available()) {
+            output.error("包围盒线框：§c开§r，但形状通道不可用（{}）", drawer.reason());
+            return;
+        }
+        ghost::ProjectionManager::getInstance().refreshWireframes();
+        output.success("包围盒线框：§a开§r（形状通道：{}）", drawer.reason());
+        return;
+    }
     case LitAction::rotate:
         schematic::rotateProjection(output, playerOf(origin));
         return;
+    case LitAction::place:
+    case LitAction::replace: {
+        auto* session = ghost::ProjectionManager::getInstance().active();
+        if (session == nullptr) {
+            output.error("没有活动会话：先 /lit load <file> [x y z]");
+            return;
+        }
+        auto const bounds = session->bounds();
+        schematic::placeProjection(
+            output,
+            playerOf(origin),
+            bounds.from,
+            bounds.to,
+            action == LitAction::replace
+        );
+        return;
+    }
     case LitAction::unload: {
         auto* player = playerOf(origin);
         if (player == nullptr) {
@@ -213,8 +268,18 @@ void registerLitCommand() {
         .required("to")
         .execute([](::CommandOrigin const& origin, ::CommandOutput& output, LitLayerParams const& params) {
             guard(output, [&] {
+                if (params.action == LitAction::place || params.action == LitAction::replace) {
+                    schematic::placeProjection(
+                        output,
+                        playerOf(origin),
+                        params.from,
+                        params.to,
+                        params.action == LitAction::replace
+                    );
+                    return;
+                }
                 if (params.action != LitAction::layer) {
-                    output.error("只有 layer 接受层号参数：/lit layer <from> <to>");
+                    output.error("只有 layer / place / replace 接受层号参数");
                     return;
                 }
                 auto* player = playerOf(origin);

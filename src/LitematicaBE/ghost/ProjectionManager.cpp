@@ -2,6 +2,8 @@
 
 #include "LitematicaBE/core/util/TextEncoding.h"
 #include "LitematicaBE/ghost/BlockHook.h"
+#include "LitematicaBE/ghost/DispatchQueue.h"
+#include "LitematicaBE/ghost/Wireframe.h"
 
 #include "ll/api/mod/Mod.h"
 #include "ll/api/mod/NativeMod.h"
@@ -97,6 +99,7 @@ bool ProjectionManager::remove(::CommandOutput& output, std::uint32_t id, ::Play
     }
 
     output.success("已删除投影 #{} {}（{} 格）", session.id(), session.label(), session.blockCount());
+    Wireframe::getInstance().hide(id);
     mSessions.erase(it);
 
     if (mActiveId == id) {
@@ -163,13 +166,25 @@ void ProjectionManager::sendCachedTo(::Player& player) {
     }
 }
 
+void ProjectionManager::refreshWireframes() {
+    for (auto& [id, session] : mSessions) {
+        (void)id;
+        session->refreshWireframe();
+    }
+}
+
 void ProjectionManager::start() {
     if (mPolling) {
         return;
     }
     installBlockChangedHook();
+    // Level::getDimension 在本服务端始终返回空，放置需要一个真实的 BlockSource：
+    // 靠 hook BlockSource:: 在第一次世界访问时捕获。
+    installBlockSourceCapture();
     mPolling = true;
+    DispatchQueue::getInstance().start();
     schedulePoll(1000);
+    schedulePump(50);
 
     if (auto mod = ::ll::mod::NativeMod::current()) {
         mod->getLogger().info("projection manager started (block hook + 1s player poll)");
@@ -181,7 +196,10 @@ void ProjectionManager::stop() {
         return;
     }
     mPolling = false;
+    DispatchQueue::getInstance().stop();
+    Wireframe::getInstance().hideAll();
     uninstallBlockChangedHook();
+    stopBlockSourceCapture();
 }
 
 void ProjectionManager::schedulePoll(std::int64_t delayMs) {
@@ -192,6 +210,20 @@ void ProjectionManager::schedulePoll(std::int64_t delayMs) {
             }
             pollPlayers();
             schedulePoll(1000);
+        },
+        std::chrono::milliseconds(delayMs)
+    );
+}
+
+void ProjectionManager::schedulePump(std::int64_t delayMs) {
+    // 发包队列要平滑（8 包/50ms），玩家状态检测没必要这么勤 —— 所以两条定时器分开。
+    ::ll::thread::ServerThreadExecutor::getDefault().executeAfter(
+        [this]() {
+            if (!mPolling) {
+                return;
+            }
+            DispatchQueue::getInstance().pump();
+            schedulePump(50);
         },
         std::chrono::milliseconds(delayMs)
     );

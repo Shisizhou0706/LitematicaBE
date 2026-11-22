@@ -7,6 +7,8 @@
 #include "mc/world/level/BlockPos.h"
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/block/Block.h"
+#include "mc/world/level/chunk/LevelChunk.h"
+#include "mc/world/level/dimension/Dimension.h"
 
 #include <atomic>
 #include <cstdint>
@@ -16,6 +18,40 @@ namespace litematicabe::ghost {
 namespace {
 
 std::atomic<std::uint64_t> gSetCalls{0};
+
+/// 运行时捕获到的 BlockSource。
+///
+/// 背景：LL 1.9.9 在这个服务端上 `Level::getDimension()` 始终返回空 weak_ptr，
+/// `mRegions` / `mDimensions` 读出来也都是 0（结构布局与 BDS 实际不符），
+/// 于是「往世界里写方块」拿不到 BlockSource。改成运行时捕获，两个入口：
+///   * 区块创建（`LevelChunk::createNewNoCustomDeleter`）—— 参数直接带 `Dimension&`，
+///     世界加载时一定发生，无玩家也能命中；
+///   * `BlockSource::$getBlock` / `$setBlock` —— 世界开始活动后一定能命中。
+::BlockSource* gCapturedSource = nullptr;
+bool           gCaptureInstalled{false};
+
+/// BlockSource:: 有两个重载，先转成确定类型再交给 hook 宏。
+
+/// `BlockSource::$getBlock` 有两个重载，先转成确定类型再交给 hook 宏。
+using GetBlockPosFn = ::Block const& (::BlockSource::*)(::BlockPos const&) const;
+
+GetBlockPosFn const kGetBlockPos = static_cast<GetBlockPosFn>(&::BlockSource::$getBlock);
+
+LL_TYPE_INSTANCE_HOOK(
+    BlockSourceCaptureHook,
+    ll::memory::HookPriority::Highest,
+    ::BlockSource,
+    kGetBlockPos,
+    ::Block const&,
+    ::BlockPos const& pos
+) {
+    if (gCapturedSource == nullptr) {
+        gCapturedSource = thisFor<::BlockSource>();
+    }
+    return origin(pos);
+}
+
+ll::memory::HookRegistrar<BlockSourceCaptureHook> gCaptureHook;
 
 // 写入方块：BlockSource::$setBlock(pos, block, flags, syncMsg, ctx)
 //
@@ -36,6 +72,9 @@ LL_TYPE_INSTANCE_HOOK(
     ::BlockChangeContext const&    changeSourceContext
 ) {
     ++gSetCalls;
+    if (gCapturedSource == nullptr) {
+        gCapturedSource = thisFor<::BlockSource>();
+    }
     bool const result = origin(pos, block, updateFlags, syncMsg, changeSourceContext);
     if (result && block.isAir()) {
         // 多投影：分发给所有包含该坐标的会话（可能同时命中多份）。
@@ -68,5 +107,34 @@ void uninstallBlockChangedHook() {
 bool blockHookInstalled() { return gInstalled; }
 
 std::uint64_t blockSetCalls() { return gSetCalls.load(); }
+
+bool installBlockSourceCapture() {
+    if (gCapturedSource != nullptr || gCaptureInstalled) {
+        return true;
+    }
+    try {
+        gCaptureHook.hook();
+        gCaptureInstalled = true;
+    } catch (...) {
+        gCaptureInstalled = false;
+    }
+    // 返回「hook 是否挂上」，不返回「是否已捕获」：世界加载前必然捕获不到，
+    // 拿它当安装结果会让每次启动都报一条假的 "NOT installed"。
+    return gCaptureInstalled;
+}
+
+bool blockSourceCaptureInstalled() { return gCaptureInstalled; }
+
+::BlockSource* capturedBlockSource() { return gCapturedSource; }
+
+void stopBlockSourceCapture() {
+    if (gCaptureInstalled) {
+        try {
+            gCaptureHook.unhook();
+        } catch (...) {
+        }
+        gCaptureInstalled = false;
+    }
+}
 
 } // namespace litematicabe::ghost

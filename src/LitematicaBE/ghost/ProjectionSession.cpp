@@ -4,10 +4,13 @@
 #include "LitematicaBE/core/schematic/McstructureFile.h"
 #include "LitematicaBE/core/util/TextEncoding.h"
 #include "LitematicaBE/ghost/BlockHook.h"
+#include "LitematicaBE/ghost/DispatchQueue.h"
 #include "LitematicaBE/ghost/PacketSender.h"
 #include "LitematicaBE/ghost/SurfaceCull.h"
+#include "LitematicaBE/ghost/Wireframe.h"
 #include "LitematicaBE/mapping/BlockStateResolve.h"
 #include "LitematicaBE/mapping/GhostMap.h"
+#include "LitematicaBE/mapping/PlaceResolve.h"
 
 #include "ll/api/event/EventBus.h"
 #include "ll/api/mod/Mod.h"
@@ -20,7 +23,11 @@
 #include "mc/server/commands/CommandOutput.h"
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/level/BlockPos.h"
+#include "mc/world/level/DimensionManager.h"
 #include "mc/world/level/Level.h"
+#include "mc/world/level/BlockSource.h"
+#include "mc/world/level/ChunkPos.h"
+#include "mc/world/level/chunk/ChunkSource.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/dimension/Dimension.h"
 
@@ -40,6 +47,9 @@ namespace util = litematicabe::util;
 
 constexpr std::size_t kMaxCollectBlocks = 400000;
 
+/// 放置时的方块更新标志：0x1 通知邻居 + 0x2 同步到客户端。
+constexpr int kPlaceUpdateFlags = 3;
+
 std::string toUtf8String(std::filesystem::path const& path) { return util::toUtf8(path); }
 
 } // namespace
@@ -47,6 +57,10 @@ std::string toUtf8String(std::filesystem::path const& path) { return util::toUtf
 ProjectionSession::ProjectionSession(std::uint32_t id, std::string label)
     : mId(id),
       mLabel(std::move(label)) {}
+
+ProjectionSession::~ProjectionSession() {
+    Wireframe::getInstance().hide(mId);
+}
 
 bool ProjectionSession::begin(
     ::CommandOutput&            output,
@@ -114,7 +128,22 @@ bool ProjectionSession::begin(
             return true;
         }
 
-        pending.push_back({wx, wy, wz, runtimeId, std::string{ref.name}});
+        // 原始状态串：真实放置时用（跟着文件口径走，不做 ghost 替换）
+        std::string originState{ref.name};
+        if (ref.properties != nullptr && !ref.properties->empty()) {
+            originState.push_back('[');
+            for (std::size_t i = 0; i < ref.properties->size(); ++i) {
+                if (i != 0) {
+                    originState.push_back(',');
+                }
+                originState.append((*ref.properties)[i].first);
+                originState.push_back('=');
+                originState.append((*ref.properties)[i].second);
+            }
+            originState.push_back(']');
+        }
+
+        pending.push_back({wx, wy, wz, runtimeId, std::string{ref.name}, std::move(originState)});
         return true;
     };
 
@@ -162,12 +191,21 @@ bool ProjectionSession::begin(
 
     mBlocks.clear();
     mBlocks.reserve(pending.size());
+    mPalette.clear();
+    mPaletteIds.clear();
+    mIsBedrockSource = isMcstructure;
     std::int32_t minY = pending.front().y;
     std::int32_t maxY = pending.front().y;
     for (auto const& block : pending) {
-        mBlocks.push_back(
-            Entry{block.x, block.y, block.z, block.runtimeId, block.x - baseX, block.z - baseZ}
-        );
+        mBlocks.push_back(Entry{
+            block.x,
+            block.y,
+            block.z,
+            block.runtimeId,
+            block.x - baseX,
+            block.z - baseZ,
+            internPalette(block.state),
+        });
         minY = std::min(minY, block.y);
         maxY = std::max(maxY, block.y);
     }
@@ -192,6 +230,10 @@ bool ProjectionSession::begin(
         mFootprintD = std::max(mFootprintD, entry.odz + 1);
     }
     mRotation = 0;
+    mMinX     = baseX;
+    mMaxX     = baseX + mFootprintW - 1;
+    mMinZ     = baseZ;
+    mMaxZ     = baseZ + mFootprintD - 1;
     mShownIndices.clear();
     mActive = true;
     ++mStats.shows;
@@ -276,6 +318,8 @@ std::size_t ProjectionSession::clear(::CommandOutput& output, ::Player& player) 
     mViewers.clear();
     mShown             = LayerRange{0, -1};
 
+    Wireframe::getInstance().hide(mId);
+
     output.success("已收回 {} 格（{} 包）", cleared, encoded);
     return encoded;
 }
@@ -344,14 +388,24 @@ std::size_t ProjectionSession::showLayers(
     mShown        = LayerRange{low, high};
     mStats.sentPackets += encoded;
 
+    refreshWireframe();
+
+    // 首包同步发（小投影立刻出现，绝不让队列成为「看不到投影」的唯一通道），
+    // 其余包按 8 包/50ms 铺开，避免一次把几百个包砸给主线程和客户端。
+    std::size_t const syncCount = std::min<std::size_t>(1, packets.size());
+
     level->forEachPlayer([&](::Player& p) {
         ++players;
-        // 同步发完：load/layer 必须立刻可见。队列（tick 预算）留作后续的大投影优化，
-        // 不能让它成为「看不到投影」的唯一通道。
-        for (auto const& packet : packets) {
-            if (sender.send(p, packet.packetId, packet.body)) {
+        for (std::size_t i = 0; i < syncCount; ++i) {
+            if (sender.send(p, packets[i].packetId, packets[i].body)) {
                 ++sent;
             }
+        }
+        if (packets.size() > syncCount) {
+            DispatchQueue::getInstance().enqueue(
+                p.getRealName(),
+                std::vector<EncodedPacket>(packets.begin() + static_cast<std::ptrdiff_t>(syncCount), packets.end())
+            );
         }
         // 显示层镜像：记下这名玩家现在看到了哪些格。
         auto& keys = mViewers[p.getRealName()];
@@ -492,6 +546,8 @@ std::size_t ProjectionSession::prepareLayers(::CommandOutput& output, std::int32
     mShown        = LayerRange{low, high};
     mViewers.clear();
 
+    refreshWireframe();
+
     output.success(
         "§b[层就绪]§r 层 {}~{}：{} 格 → {} 包（当前无玩家，已缓存；玩家进服后数秒内自动补发）",
         low,
@@ -520,6 +576,47 @@ void ProjectionSession::sendCachedTo(::Player& player) {
     }
     mStats.sentPackets += mShownPackets.size();
     ++mStats.resyncs;
+}
+
+void ProjectionSession::refreshWireframe() {
+    auto& wireframe = Wireframe::getInstance();
+    if (!mActive || !wireframe.enabled()) {
+        wireframe.hide(mId);
+        return;
+    }
+
+    if (mMinX > mMaxX || mMinZ > mMaxZ) {
+        wireframe.hide(mId);
+        return;
+    }
+
+    // 有显示层就框住显示层；没有就框住整份投影（load 后先给一个"投影在哪"的答案）。
+    bool const haveShown = !mShownIndices.empty() && mShown.from <= mShown.to;
+    std::int32_t const yFrom = haveShown ? mShown.from : mBounds.from;
+    std::int32_t const yTo   = haveShown ? mShown.to : mBounds.to;
+    if (yFrom > yTo) {
+        wireframe.hide(mId);
+        return;
+    }
+
+    // 显示中的层用绿色，仅有投影范围（还没切层）用黄色。
+    float const r = haveShown ? 0.35f : 1.00f;
+    float const g = haveShown ? 0.95f : 0.85f;
+    float const b = haveShown ? 0.45f : 0.20f;
+
+    wireframe.show(
+        mId,
+        static_cast<float>(mMinX),
+        static_cast<float>(yFrom),
+        static_cast<float>(mMinZ),
+        static_cast<float>(mMaxX + 1),
+        static_cast<float>(yTo + 1),
+        static_cast<float>(mMaxZ + 1),
+        r,
+        g,
+        b,
+        1.0f
+    );
 }
 
 ProjectionSession::MirrorInfo ProjectionSession::mirror() const {
@@ -593,6 +690,13 @@ std::size_t ProjectionSession::rotate(::CommandOutput& output, ::Player* player)
         minZ = std::min(minZ, entry.z);
         maxZ = std::max(maxZ, entry.z);
     }
+    // x/z 都变了；显示层存在时随后 showLayers/prepareLayers 会重画线框，
+    // 没显示层时旧框已在 clear() 收起。
+    mMinX = minX;
+    mMaxX = maxX;
+    mMinZ = minZ;
+    mMaxZ = maxZ;
+
     output.success(
         "§b[旋转]§r 当前 {}°，占用 X {}~{}（{}）/ Z {}~{}（{}）",
         mRotation,
@@ -612,6 +716,361 @@ std::size_t ProjectionSession::rotate(::CommandOutput& output, ::Player* player)
         return showLayers(output, *player, from, to);
     }
     return prepareLayers(output, from, to);
+}
+
+
+std::uint32_t ProjectionSession::internPalette(std::string const& stateText) {
+    if (auto const it = mPaletteIds.find(stateText); it != mPaletteIds.end()) {
+        return it->second;
+    }
+    auto const id = static_cast<std::uint32_t>(mPalette.size());
+    mPalette.push_back(stateText);
+    mPaletteIds.emplace(stateText, id);
+    return id;
+}
+
+
+ProjectionSession::PlaceResult ProjectionSession::place(
+    ::CommandOutput&    output,
+    ::Player*           player,
+    std::int32_t        from,
+    std::int32_t        to,
+    PlaceOptions const& options
+) {
+    PlaceResult result;
+
+    if (!mActive) {
+        output.error("没有活动会话：先 /lit load <file> [x y z]");
+        return result;
+    }
+
+    auto level = ::ll::service::getLevel();
+    if (!level) {
+        output.error("当前没有加载的世界");
+        return result;
+    }
+
+    auto const low  = std::min(from, to);
+    auto const high = std::max(from, to);
+
+    // 目标 BlockSource，按可靠性排序：
+    //   1. 玩家 —— Actor::getDimensionBlockSource() 是 MCFOLD，直接读成员，最可靠；
+    //   2. 运行时捕获 —— hook BlockSource:: / $setBlock 见过的实例；
+    //   3. 逐个维度 id —— Level::getDimension（本服务端实测恒为空，留着兜底）；
+    //   4. 已加载 region 集合。
+    ::BlockSource* sourcePtr = nullptr;
+    std::string    sourceHow;
+
+    auto contextPlayer = player;
+    if (contextPlayer == nullptr) {
+        level->forEachPlayer([&](::Player& candidate) {
+            contextPlayer = &candidate;
+            return false;
+        });
+    }
+    if (contextPlayer != nullptr) {
+        sourcePtr = &contextPlayer->getDimensionBlockSource();
+        sourceHow = "玩家 " + contextPlayer->getRealName();
+    }
+    if (sourcePtr == nullptr) {
+        sourcePtr = capturedBlockSource();
+        if (sourcePtr != nullptr) {
+            sourceHow = "运行时捕获";
+        }
+    }
+    if (sourcePtr == nullptr) {
+        for (int id = 0; id < 16 && sourcePtr == nullptr; ++id) {
+            auto dimension = level->getDimension(::DimensionType{id}).lock();
+            if (dimension) {
+                sourcePtr = &dimension->getBlockSourceFromMainChunkSource();
+                sourceHow = "维度 id " + std::to_string(id);
+            }
+        }
+    }
+    if (sourcePtr == nullptr) {
+        auto& regions = *level->mRegions;
+        if (!regions.empty() && regions.size() < 64) {
+            for (auto* region : regions) {
+                if (region != nullptr) {
+                    sourcePtr = region;
+                    sourceHow = "已加载 region";
+                    break;
+                }
+            }
+        }
+    }
+    if (sourcePtr == nullptr && !options.dryRun) {
+        output.error(
+            "拿不到 BlockSource：控制台执行需要至少一名玩家在线（或在游戏里执行 /lit place）"
+        );
+        return result;
+    }
+
+    // 先把 ghost 层收回：真实方块放下去后，残留的假方块会和它抢同一格。
+    if (!options.dryRun && options.clearGhost && !mShownIndices.empty()) {
+        ::Player* viewer = contextPlayer;
+        if (viewer != nullptr) {
+            std::size_t ignored = clear(output, *viewer);
+            (void)ignored;
+        } else {
+            mShownIndices.clear();
+            mShownPackets.clear();
+            mViewers.clear();
+            mShown = LayerRange{0, -1};
+            Wireframe::getInstance().hide(mId);
+        }
+    }
+
+    // 待放清单：自下而上（y → x → z），依附类方块才不会悬空判定失败。
+    std::vector<std::uint32_t> order;
+    order.reserve(mBlocks.size());
+    for (std::uint32_t i = 0; i < mBlocks.size(); ++i) {
+        auto const& entry = mBlocks[i];
+        if (entry.y < low || entry.y > high) {
+            continue;
+        }
+        order.push_back(i);
+    }
+    if (order.empty()) {
+        output.error("层 {}~{} 没有方块", low, high);
+        return result;
+    }
+    std::sort(order.begin(), order.end(), [this](std::uint32_t a, std::uint32_t b) {
+        auto const& left  = mBlocks[a];
+        auto const& right = mBlocks[b];
+        if (left.y != right.y) {
+            return left.y < right.y;
+        }
+        if (left.x != right.x) {
+            return left.x < right.x;
+        }
+        return left.z < right.z;
+    });
+
+    auto const limit  = std::min(order.size(), options.maxBlocks);
+    auto&      placer = mapping::PlaceResolve::getInstance();
+    placer.ensureLoaded();
+
+    // ---- 区块预加载 ----
+    // BDS 往未加载区块写方块会失败（CALL 在 /fill 上实测的报错是「无法在世界外放置方块」，
+    // 走 API 就是 setBlock 返回 false）。所以先把投影覆盖到的 chunk 同步拉起来再逐格写。
+    ::ChunkSource* chunkSource = nullptr;
+    if (sourcePtr != nullptr && !options.dryRun) {
+        chunkSource = &sourcePtr->getChunkSource();
+    }
+    if (chunkSource != nullptr && limit > 0) {
+        std::int32_t firstCx = mBlocks[order[0]].x >> 4;
+        std::int32_t lastCx  = firstCx;
+        std::int32_t firstCz = mBlocks[order[0]].z >> 4;
+        std::int32_t lastCz  = firstCz;
+        for (std::size_t k = 0; k < limit; ++k) {
+            auto const& entry = mBlocks[order[k]];
+            auto const  cx    = entry.x >> 4;
+            auto const  cz    = entry.z >> 4;
+            firstCx           = std::min(firstCx, cx);
+            lastCx            = std::max(lastCx, cx);
+            firstCz           = std::min(firstCz, cz);
+            lastCz            = std::max(lastCz, cz);
+        }
+        for (auto cx = firstCx; cx <= lastCx; ++cx) {
+            for (auto cz = firstCz; cz <= lastCz; ++cz) {
+                auto chunk = chunkSource->$getOrLoadChunk(
+                    ::ChunkPos{cx, cz},
+                    ::ChunkSource::LoadMode::None,
+                    false
+                );
+                if (chunk) {
+                    ++result.loadedChunks;
+                } else {
+                    ++result.failedChunks;
+                }
+            }
+        }
+    }
+
+    // 写成功后记几格，收尾再回读一次：这是「真的写进了世界」的硬证据。
+    struct ReadbackSample {
+        ::BlockPos   pos;
+        std::uint64_t stateHash{};
+    };
+    std::vector<ReadbackSample> samples;
+    samples.reserve(3);
+
+    auto const started = std::chrono::steady_clock::now();
+
+    for (std::size_t k = 0; k < limit; ++k) {
+        auto const& entry     = mBlocks[order[k]];
+        auto const& stateText = mPalette[entry.paletteId];
+        auto const  resolved  = placer.resolve(stateText, mIsBedrockSource);
+
+        if (resolved.block == nullptr) {
+            ++result.unresolved;
+            if (result.firstUnresolved.empty()) {
+                result.firstUnresolved = stateText;
+            }
+            if (options.dryRun && result.unresolvedSamples.size() < 8) {
+                result.unresolvedSamples.push_back(
+                    stateText + "  ⇒  " + placer.explain(stateText, mIsBedrockSource)
+                );
+            }
+            continue;
+        }
+        if (!resolved.stateApplied) {
+            ++result.stateIgnored;
+            if (options.dryRun && result.ignoredSamples.size() < 6
+                && std::find(
+                       result.ignoredSamples.begin(),
+                       result.ignoredSamples.end(),
+                       stateText
+                   )
+                       == result.ignoredSamples.end()) {
+                result.ignoredSamples.push_back(stateText + "  ⇒  " + resolved.sample);
+            }
+        }
+        switch (resolved.precision) {
+        case mapping::PlaceResolve::Precision::Exact:
+            ++result.exact;
+            break;
+        case mapping::PlaceResolve::Precision::Mapped:
+            ++result.mapped;
+            break;
+        case mapping::PlaceResolve::Precision::Default:
+            ++result.defaulted;
+            break;
+        case mapping::PlaceResolve::Precision::Failed:
+            break;
+        }
+
+        if (options.dryRun) {
+            ++result.placed; // 干跑：把「能放」记在 placed 上
+            continue;
+        }
+
+        ::BlockPos const pos{entry.x, entry.y, entry.z};
+        if (!options.overwrite && !sourcePtr->getBlock(pos).isAir()) {
+            ++result.skipped;
+            continue;
+        }
+        // 写完必须回读校验：setBlock 返回 true 也可能没落地（区块未就绪、被邻居更新顶掉）。
+        // 比对用 mSerializationIdHash —— mNetworkId 是方块类型级的，同方块不同状态共用一个值，
+        // 拿它比对会把「状态丢了」当成成功。
+        auto const written = [&]() {
+            return sourcePtr->getBlock(pos).mSerializationIdHash == resolved.block->mSerializationIdHash;
+        };
+
+        bool ok = sourcePtr->setBlockAndRetainCompatibleBlockActor(pos, *resolved.block, kPlaceUpdateFlags);
+        if (!ok || !written()) {
+            // 再拉一次区块后重试：未加载区块的写入会静默失败。
+            if (chunkSource != nullptr) {
+                (void)chunkSource->$getOrLoadChunk(
+                    ::ChunkPos{pos.x >> 4, pos.z >> 4},
+                    ::ChunkSource::LoadMode::None,
+                    false
+                );
+            }
+            ok = sourcePtr->setBlockAndRetainCompatibleBlockActor(pos, *resolved.block, kPlaceUpdateFlags);
+            if (ok && written()) {
+                ++result.retried;
+            }
+        }
+
+        if (ok && written()) {
+            ++result.placed;
+            if (samples.size() < 3) {
+                samples.push_back({pos, resolved.block->mSerializationIdHash});
+            }
+        } else {
+            if (ok) {
+                ++result.mismatched; // 报成功但回读不一致
+            }
+            ++result.failed;
+        }
+    }
+
+    result.pending = order.size() - limit;
+
+    auto const ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - started
+    )
+                        .count();
+
+    if (options.dryRun) {
+        output.success(
+            "§b[试算]§r {}：层 {}~{} → 可放置 {} 格 / 解析失败 {} 格，耗时 {} ms",
+            mFile,
+            low,
+            high,
+            result.placed,
+            result.unresolved,
+            ms
+        );
+        output.success(
+            "    精度：原样 {} / 改名 {} / 仅默认状态 {}",
+            result.exact,
+            result.mapped,
+            result.defaulted
+        );
+        if (result.stateIgnored > 0) {
+            output.success(
+                "    状态与默认相同 {} 格（含本来就等于默认值的方块；朝向请游戏内确认）",
+                result.stateIgnored
+            );
+            for (std::size_t i = 0; i < result.ignoredSamples.size() && i < 3; ++i) {
+                output.success("       {}", result.ignoredSamples[i]);
+            }
+        }
+
+        for (auto const& sample : result.unresolvedSamples) {
+            output.success("    失败例：{}", sample);
+        }
+        if (!mPalette.empty()) {
+            output.success("    调色板：{} 项（去重后的方块状态）", mPalette.size());
+        }
+        return result;
+    }
+
+    output.success(
+        "§b[放置]§r {}：层 {}~{}（{}）→ 写入 {} 格（跳过 {} 已有方块 / 解析失败 {} / 写入失败 {}），耗时 {} ms",
+        mFile,
+        low,
+        high,
+        sourceHow,
+        result.placed,
+        result.skipped,
+        result.unresolved,
+        result.failed,
+        ms
+    );
+    output.success("    精度：原样 {} / 改名 {} / 仅默认状态 {}", result.exact, result.mapped, result.defaulted);
+    if (!samples.empty() && sourcePtr != nullptr) {
+        std::size_t matched = 0;
+        for (auto const& sample : samples) {
+            if (sourcePtr->getBlock(sample.pos).mSerializationIdHash == sample.stateHash) {
+                ++matched;
+            }
+        }
+        output.success("    收尾回读：{}/{} 格状态与目标一致", matched, samples.size());
+    }
+    if (result.loadedChunks > 0 || result.failedChunks > 0) {
+        output.success("    区块：加载 {} 个 / 失败 {}", result.loadedChunks, result.failedChunks);
+    }
+    if (result.retried > 0) {
+        output.success("    {} 格在重载区块后写成功", result.retried);
+    }
+    if (result.mismatched > 0) {
+        output.error("    {} 格 setBlock 报成功但回读不一致（区块或 tick 竞争）", result.mismatched);
+    }
+    if (!result.firstUnresolved.empty()) {
+        output.error("放不下的状态串示例：{}", result.firstUnresolved);
+    }
+    if (result.pending > 0) {
+        output.error(
+            "还有 {} 格超出单次上限 {}，用 /lit place <from> <to> 分层继续",
+            result.pending,
+            options.maxBlocks
+        );
+    }
+    return result;
 }
 
 } // namespace litematicabe::ghost

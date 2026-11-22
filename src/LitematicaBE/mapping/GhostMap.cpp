@@ -26,8 +26,13 @@ std::string const* findState(
     std::vector<std::pair<std::string, std::string>> const& states,
     std::string const&                                     name
 ) {
+    // 结构文件里的状态键可能带 minecraft: 也可能不带，比较时统一去掉命名空间。
+    auto const bare = [](std::string_view text) {
+        auto const pos = text.find(':');
+        return pos == std::string_view::npos ? text : text.substr(pos + 1);
+    };
     for (auto const& [key, value] : states) {
-        if (key == name) {
+        if (bare(key) == bare(name)) {
             return &value;
         }
     }

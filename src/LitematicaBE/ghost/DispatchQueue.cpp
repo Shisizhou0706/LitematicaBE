@@ -2,14 +2,13 @@
 
 #include "LitematicaBE/ghost/PacketSender.h"
 
-#include "ll/api/event/EventBus.h"
 #include "ll/api/mod/NativeMod.h"
-#include "ll/api/event/world/LevelTickEvent.h"
 #include "ll/api/service/Bedrock.h"
 
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/level/Level.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 
@@ -24,29 +23,44 @@ void DispatchQueue::start() {
     if (mRunning) {
         return;
     }
-    auto& bus = ::ll::event::EventBus::getInstance();
-    mListener = bus.emplaceListener<::ll::event::LevelTickEvent>([this](::ll::event::LevelTickEvent&) {
-        onTick();
-    });
-    mRunning = true;
+    mLastPump = std::chrono::steady_clock::now();
+    mRunning  = true;
 }
 
 void DispatchQueue::stop() {
     if (!mRunning) {
         return;
     }
-    if (mListener) {
-        ::ll::event::EventBus::getInstance().removeListener(mListener);
-        mListener.reset();
-    }
     mRunning = false;
     mJobs.clear();
+}
+
+void DispatchQueue::pump() {
+    if (!mRunning) {
+        return;
+    }
+    auto const now = std::chrono::steady_clock::now();
+    auto const elapsedMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - mLastPump).count();
+    // 每 50ms 一个 tick；单次最多补 40 个 tick（2 秒），长时间停滞后不一次性爆发。
+    std::size_t const ticks =
+        std::min<std::size_t>(40, static_cast<std::size_t>(elapsedMs / 50));
+    if (ticks == 0) {
+        return;
+    }
+    mLastPump += std::chrono::milliseconds(static_cast<std::int64_t>(ticks) * 50);
+    drain(ticks * mBudgetPerTick);
 }
 
 std::size_t DispatchQueue::enqueue(std::string const& playerName, std::vector<EncodedPacket> packets) {
     if (packets.empty()) {
         return 0;
     }
+    // 同一玩家重新 show/clear：旧队列作废，别让旧层的包在新层之后到达。
+    mJobs.erase(
+        std::remove_if(mJobs.begin(), mJobs.end(), [&](Job const& job) { return job.playerName == playerName; }),
+        mJobs.end()
+    );
     auto const count = packets.size();
     mQueued += count;
     mJobs.push_back(Job{playerName, std::move(packets), 0});
@@ -57,8 +71,7 @@ void DispatchQueue::clear() {
     mJobs.clear();
 }
 
-void DispatchQueue::onTick() {
-    ++mTicks;
+void DispatchQueue::drain(std::size_t budget) {
     if (mJobs.empty()) {
         return;
     }
@@ -67,8 +80,8 @@ void DispatchQueue::onTick() {
         return;
     }
 
-    auto&       sender = PacketSender::getInstance();
-    std::size_t budget = mBudgetPerTick;
+    auto& sender = PacketSender::getInstance();
+    ++mTicks;
 
     while (budget > 0 && !mJobs.empty()) {
         auto& job = mJobs.front();
