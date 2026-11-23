@@ -117,7 +117,15 @@ struct Request {
 
 bool recvUntil(std::string& buffer, std::size_t& scanned, SOCKET client, std::string_view needle, std::size_t limit) {
     char chunk[4096];
-    while (buffer.find(needle, scanned) == std::string::npos) {
+    while (true) {
+        // 在「已知未匹配」起点之后查找分隔符；初始 scanned = 0。
+        if (buffer.find(needle, scanned) != std::string::npos) {
+            return true;
+        }
+        if (buffer.size() > limit) {
+            return false;
+        }
+        auto const oldSize = buffer.size();
         int const received = ::recv(client, chunk, static_cast<int>(sizeof(chunk)), 0);
         if (received <= 0) {
             return false;
@@ -126,9 +134,8 @@ bool recvUntil(std::string& buffer, std::size_t& scanned, SOCKET client, std::st
         if (buffer.size() > limit) {
             return false;
         }
-        scanned = buffer.size() >= needle.size() ? buffer.size() - needle.size() : 0;
+        scanned = oldSize > needle.size() ? oldSize - (needle.size() - 1) : 0;
     }
-    return true;
 }
 
 bool recvExact(std::string& buffer, SOCKET client, std::size_t total) {
@@ -266,8 +273,7 @@ bool extractMultipart(
         return false;
     }
 
-    // 两种客户端两种写法：curl/浏览器是 filename="x.litematic"，.NET 的 HttpClient 是
-    // filename=x.litematic（可能还带 filename*=utf-8''x.litematic），都要能认。
+    // 两种客户端两种写法：curl/浏览器是 filename="x.litematic"，.NET 的 HttpClient 是 filename=x.litematic（可能还带 filename*=utf-8''x.litematic），都要能认。
     auto const headers = body.substr(headerStart, headerEnd - headerStart);
     auto       nameStart = std::string::npos;
     bool       quoted    = false;
@@ -332,7 +338,7 @@ bool sanitizeName(std::string name, std::string& out) {
 
 std::filesystem::path utf8Path(std::string const& name) { return ::litematicabe::util::fromUtf8(name); }
 
-/// 只用于诊断：把前 n 个字节变成可打印预览（\r\n 显示成 ⏎）。
+/// 只用于诊断：把前 n 个字节变成可打印预览。
 std::string preview(std::string const& data, std::size_t n) {
     std::string out;
     out.reserve(n + 8);
@@ -462,7 +468,7 @@ bool UploadServer::start() {
     if (::bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
         ::closesocket(listener);
         ::WSACleanup();
-        mLastError = "bind 失败（端口被占用？）：" + mBind + ":" + std::to_string(mPort);
+        mLastError = "bind 失败（检查端口是否被占用）：" + mBind + ":" + std::to_string(mPort);
         return false;
     }
     if (::listen(listener, 8) == SOCKET_ERROR) {
@@ -523,6 +529,18 @@ void UploadServer::serve() {
 
 void UploadServer::handleClient(std::uintptr_t clientPtr) {
     auto const client = static_cast<SOCKET>(clientPtr);
+
+    // 防御：任何连接（含浏览器预连接、中断的半途上传）都不允许无限期占住服务器线程。设置接收超时后，recv 超时返回错误，走 bad request 收尾，serve() 循环能继续 accept 下一个连接，避免一个坏连接卡死全部上传。
+    {
+        DWORD const rcvTimeoutMs = 30 * 1000;
+        ::setsockopt(
+            client,
+            SOL_SOCKET,
+            SO_RCVTIMEO,
+            reinterpret_cast<char const*>(&rcvTimeoutMs),
+            sizeof(rcvTimeoutMs)
+        );
+    }
 
     auto logger = []() -> ::ll::io::Logger* {
         auto nativeMod = ::ll::mod::NativeMod::current();

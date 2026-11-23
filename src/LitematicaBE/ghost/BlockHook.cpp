@@ -18,6 +18,7 @@ namespace litematicabe::ghost {
 namespace {
 
 std::atomic<std::uint64_t> gSetCalls{0};
+SetBlockFilter             gFilter = nullptr;
 
 /// 运行时捕获到的 BlockSource。
 ///
@@ -75,6 +76,25 @@ LL_TYPE_INSTANCE_HOOK(
     if (gCapturedSource == nullptr) {
         gCapturedSource = thisFor<::BlockSource>();
     }
+
+    // 轻松放置：在调 origin 之前决定「这一格到底写什么」。有替换时不写原方块，
+    // 所以客户端只会收到一次方块更新（写错再改会闪一帧）。
+    if (auto const filter = gFilter; filter != nullptr && !block.isAir()) {
+        ::Block const* replacement = nullptr;
+        switch (filter(*thisFor<::BlockSource>(), pos, block, replacement)) {
+        case SetBlockVerdict::Deny:
+            return false;
+        case SetBlockVerdict::Replace:
+            if (replacement != nullptr) {
+                return origin(pos, *replacement, updateFlags, syncMsg, changeSourceContext);
+            }
+            break;
+        case SetBlockVerdict::Pass:
+        default:
+            break;
+        }
+    }
+
     bool const result = origin(pos, block, updateFlags, syncMsg, changeSourceContext);
     if (result && block.isAir()) {
         // 多投影：分发给所有包含该坐标的会话（可能同时命中多份）。
@@ -107,6 +127,10 @@ void uninstallBlockChangedHook() {
 bool blockHookInstalled() { return gInstalled; }
 
 std::uint64_t blockSetCalls() { return gSetCalls.load(); }
+
+void setBlockFilter(SetBlockFilter fn) { gFilter = fn; }
+
+SetBlockFilter blockFilter() { return gFilter; }
 
 bool installBlockSourceCapture() {
     if (gCapturedSource != nullptr || gCaptureInstalled) {

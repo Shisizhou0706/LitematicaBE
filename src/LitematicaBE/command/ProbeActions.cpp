@@ -17,10 +17,14 @@
 #include "mc/world/level/dimension/Dimension.h"
 
 #include "LitematicaBE/Version.h"
+#include "LitematicaBE/core/place/PlaceConfig.h"
+#include "LitematicaBE/easyplace/EasyPlace.h"
+#include "LitematicaBE/printer/Printer.h"
 #include "LitematicaBE/ghost/BatchEncoder.h"
 #include "LitematicaBE/ghost/BlockHook.h"
 #include "LitematicaBE/ghost/ProjectionManager.h"
 #include "LitematicaBE/ghost/PacketSender.h"
+#include "LitematicaBE/ghost/ShareSwitch.h"
 #include "LitematicaBE/ghost/Wireframe.h"
 #include "LitematicaBE/hologram/HologramFacade.h"
 #include "LitematicaBE/hologram/ShapeDrawer.h"
@@ -45,17 +49,6 @@ namespace ghost = litematicabe::ghost;
 
 std::string moduleState(wchar_t const* module) {
     return ::GetModuleHandleW(module) != nullptr ? "已加载" : "未加载";
-}
-
-std::size_t flush(::Player& player, std::vector<ghost::EncodedPacket>& packets) {
-    auto&       sender = ghost::PacketSender::getInstance();
-    std::size_t ok     = 0;
-    for (auto& packet : packets) {
-        if (sender.send(player, packet.packetId, packet.body)) {
-            ++ok;
-        }
-    }
-    return ok;
 }
 
 } // namespace
@@ -109,11 +102,7 @@ void printState(::CommandOutput& output) {
         wireframe.enabled() ? "开" : "关",
         wireframe.count()
     );
-    output.success(
-        "方块 hook：set {} 次 → repaint {} 次",
-        ghost::blockSetCalls(),
-        mgrStats.repaints
-    );
+    output.success("方块 hook：set {} 次 → repaint {} 次", ghost::blockSetCalls(), mgrStats.repaints);
     if (auto const queue = ghost::DispatchQueue::getInstance().stats(); queue.pendingJobs > 0 || queue.sent > 0) {
         output.success(
             "调度：首包同步 + 队列分帧（排队 {} 包 / {} 组，已发 {} 包，丢弃 {}）",
@@ -126,6 +115,10 @@ void printState(::CommandOutput& output) {
         output.success("调度：首包同步 + 队列分帧（队列空闲）");
     }
 
+    output.success("{}", easyplace::describe());
+    output.success("{}", printer::describe());
+    output.success("{}", ghost::share::describe());
+    output.success("{}", core::place::describe());
     if (auto* session = manager.active()) {
         auto const mirror = session->mirror();
         output.success(
@@ -428,81 +421,7 @@ void printProbe(::CommandOutput& output) {
         output.error("映射表未加载：{}", map.lastError());
     }
 
-    output.success("§7/lit send 发一格；/lit batch 发 5×5；/lit info <file> 看投影统计§r");
-}
-
-void sendOne(::CommandOutput& output, ::Player& player, std::string const& block) {
-    auto& states  = mapping::BlockStateResolve::getInstance();
-    auto& encoder = ghost::BatchEncoder::getInstance();
-
-    std::uint32_t id = 0;
-    if (!states.resolve(block, id)) {
-        output.error("状态解析失败：{}", block);
-        return;
-    }
-
-    auto const                          pos = player.getFeetBlockPos();
-    std::vector<ghost::HoloBlockChange> changes{
-        {pos.x, pos.y + 2, pos.z, id, ghost::BatchEncoder::kUpdateFlags, 0, 0}
-    };
-
-    std::vector<ghost::EncodedPacket> packets;
-    if (encoder.encode(changes, packets) == 0) {
-        output.error("编码失败：批量通道不可用（先跑 /lit probe）");
-        return;
-    }
-    auto const sent = flush(player, packets);
-    output.success(
-        "已发 {} 包 / {} 格 → ({}, {}, {})，方块 {}（runtimeId {}）",
-        sent,
-        changes.size(),
-        pos.x,
-        pos.y + 2,
-        pos.z,
-        block,
-        id
-    );
-}
-
-void sendBatch(::CommandOutput& output, ::Player& player) {
-    auto& states  = mapping::BlockStateResolve::getInstance();
-    auto& encoder = ghost::BatchEncoder::getInstance();
-
-    std::uint32_t stone = 0;
-    std::uint32_t glass = 0;
-    if (!states.resolve("minecraft:stone", stone) || !states.resolve("minecraft:glass", glass)) {
-        output.error("状态解析失败（stone / glass）");
-        return;
-    }
-
-    auto const                          pos = player.getFeetBlockPos();
-    std::vector<ghost::HoloBlockChange> changes;
-    changes.reserve(25);
-    for (int dx = -2; dx <= 2; ++dx) {
-        for (int dz = -2; dz <= 2; ++dz) {
-            auto const id = ((dx + dz) & 1) == 0 ? stone : glass;
-            changes.push_back(
-                {pos.x + dx, pos.y + 2, pos.z + dz, id, ghost::BatchEncoder::kUpdateFlags, 0, 0}
-            );
-        }
-    }
-
-    std::vector<ghost::EncodedPacket> packets;
-    auto const                        encoded = encoder.encode(changes, packets);
-    if (encoded == 0) {
-        output.error("编码失败：批量通道不可用（先跑 /lit probe）");
-        return;
-    }
-    auto const sent = flush(player, packets);
-    output.success(
-        "已发 {} 包（编码 {} 包 / {} 格）→ 以 ({}, {}, {}) 为中心的 5×5 平面",
-        sent,
-        encoded,
-        changes.size(),
-        pos.x,
-        pos.y + 2,
-        pos.z
-    );
+    output.success("§7/lit info <file> 看投影统计；/lit load <file> 铺投影；/lit share 改可见性§r");
 }
 
 } // namespace litematicabe::command::probe

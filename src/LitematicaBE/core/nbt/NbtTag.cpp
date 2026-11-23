@@ -151,6 +151,7 @@ TagPtr readList(Reader& reader, int depth) {
 
     auto const childType = static_cast<TagType>(reader.u8());
     auto const count     = reader.u32();
+    tag->listType        = childType;
     if (!reader.ok()) {
         return nullptr;
     }

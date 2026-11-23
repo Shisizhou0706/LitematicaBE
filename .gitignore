@@ -576,6 +576,10 @@ __pycache__/
 /tools/parse-check/build/
 /tools/parse-check/.xmake/
 
+# 离线回归工程（tools/xlsx-check）的本地构建产物
+/tools/xlsx-check/build/
+/tools/xlsx-check/.xmake/
+
 # 文档目录
 /docs/
 /docs

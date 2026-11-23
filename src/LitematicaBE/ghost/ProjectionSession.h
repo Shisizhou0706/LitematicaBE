@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LitematicaBE/core/report/MaterialCounter.h"
 #include "LitematicaBE/ghost/BatchEncoder.h"
 
 #include <cstddef>
@@ -12,6 +13,7 @@
 
 class CommandOutput;
 class Player;
+class Block;
 
 namespace litematicabe::ghost {
 
@@ -61,7 +63,7 @@ public:
         bool        overwrite{};       // true：连目标位置已有的非空气方块也覆盖
         std::size_t maxBlocks{200000}; // 单次上限，超出部分不处理（分层多次跑）
         bool        clearGhost{true};  // 放置前先收回 ghost 显示层
-        bool        dryRun{};          // true：只跑解析统计，不写世界（/lit plan）
+        bool        dryRun{};          // true：只跑解析统计，不写世界（当前没有指令入口，留给调试/将来复用）
     };
 
     struct PlaceResult {
@@ -97,7 +99,30 @@ public:
     );
 
     /// 把当前显示层重新推给指定玩家（进服/重生/传送/换维度/手动重发）。
+    ///
+    /// 私有会话只推给主人；别人调用一律直接返回（`visibleTo` 过滤）。
     void sendCachedTo(::Player& player);
+
+    // ───────────────────────── 共享 / 私有（可见性） ─────────────────────────
+    //
+    // 一份投影默认对所有在线玩家可见（旧行为）。主人执行 `/lit share off` 之后，
+    // 这份投影只对主人可见：显示层不再发给别人，别人屏幕上已出现的 ghost 由
+    // `revokeFrom()` 读真实方块擦掉。判定集中在 `visibleTo()`，所以所有发包点只要
+    // 过一遍这个函数，切开关就不需要重载投影。
+
+    /// 会话主人（`/lit load` 的玩家名）；空 = 控制台创建、无主人、恒为共享。
+    void setOwner(std::string owner);
+    [[nodiscard]] std::string const& owner() const noexcept { return mOwner; }
+
+    /// 主人是否选了「私有」（无主人的会话永远返回 false）。
+    [[nodiscard]] bool privateMode() const;
+
+    /// 该玩家能不能看到这份投影。
+    [[nodiscard]] bool visibleTo(std::string const& playerName) const;
+
+    /// 把该玩家屏幕上属于本会话的 ghost 擦掉（发当前显示层的真实方块）。
+    /// @return 发出的包数。
+    std::size_t revokeFrom(::Player& player);
 
     /// 刷新包围盒线框：有显示层时框住显示层，否则框住整份投影。
     void refreshWireframe();
@@ -106,14 +131,70 @@ public:
     [[nodiscard]] bool         active() const noexcept { return mActive; }
     [[nodiscard]] std::string const& file() const noexcept { return mFile; }
     [[nodiscard]] std::size_t  blockCount() const noexcept { return mBlocks.size(); }
+
+    /// 材料统计（`/lit material`）：把整份投影的方块按调色板聚合成「方块名 + 材质变体」。
+    ///
+    /// 统计的是**全部方块**（`mBlocks`，未做表面剔除），不是当前显示的层 ——
+    /// 材料清单要能算「建完这座建筑要多少料」，跟眼前看哪一层无关。
+    [[nodiscard]] core::report::MaterialReport materials() const;
     [[nodiscard]] LayerRange   bounds() const noexcept { return mBounds; }
     [[nodiscard]] LayerRange   shown() const noexcept { return mShown; }
 
     /// 该坐标是否属于这份投影（方块变化分发用）。
     [[nodiscard]] bool contains(std::int32_t x, std::int32_t y, std::int32_t z) const;
 
+    /// 轻松放置：查这格投影要求什么方块。
+    ///
+    /// @param out 该格的目标方块（`Block` 是注册表单例，指针可直接比 hash）；
+    ///            nullptr 表示「这格在投影里，但解析不出可放置的方块」（映射失败）。
+    /// @return false = 该坐标不属于本投影。
+    [[nodiscard]] bool
+    targetCell(std::int32_t x, std::int32_t y, std::int32_t z, ::Block const*& out) const;
+
+    // ───────────────────────── 已填充格（叠加态修复） ─────────────────────────
+    //
+    // 问题的形状：投影格被玩家放上真方块后，ghost 假方块和真方块会同时「存在」——
+    // 客户端的最后一条消息决定外观，但假方块的碰撞盒是自定义方块（`lit:g_*`），
+    // 与服务端真方块不一致，玩家走过去就会被服务端弹回来。
+    //
+    // 处理方式：把「已经被真实方块填上」的格记下来（`mFilledCells`），
+    //   * 之后任何 ghost 发包都跳过这些格；
+    //   * 已经发过的，补一条「该格真实方块」的包把它压回去；
+    //   * 同子区块的 ghost 重新补发一遍（排除已填充格），修掉引擎发包时被顺手吞掉的邻居。
+    // 玩家把方块挖掉（`requestRepaint`）时把该格从集合里摘除，ghost 恢复。
+
+    /// 该格放上了真方块 → 之后不再显示 ghost。
+    void markFilled(std::int32_t x, std::int32_t y, std::int32_t z);
+    [[nodiscard]] bool isFilled(std::int32_t x, std::int32_t y, std::int32_t z) const;
+    [[nodiscard]] std::size_t filledCount() const noexcept { return mFilledCells.size(); }
+
+    /// 把已填充格压回真实方块（发一包真方块的 network id 给该玩家）。
+    /// @return 发出的包数。
+    std::size_t correctFilledFor(::Player& player);
+
+    /// 重发 (x,y,z) 所在子区块的 ghost（排除已填充格），让被吞掉的邻居 ghost 自愈。
+    std::size_t repaintSubchunkFor(::Player& player, std::int32_t x, std::int32_t y, std::int32_t z);
+
+    /// ghost 包发完之后必须调一次：把已填充格压回真方块 + 补发受影响的子区块。
+    ///
+    /// 两个作用：
+    ///   1. 预编码包会把玩家已经放好的真方块重新盖上 ghost，压回去才不会有「叠加态」；
+    ///   2. 引擎发方块更新时同子区块的邻居 ghost 会被客户端吞掉，这里按子区块补一遍。
+    void afterGhostPush(::Player& player);
+
+    /// 该格对应的假方块 runtime id（0 = 不是投影格或解析失败）。
+    [[nodiscard]] std::uint32_t ghostRuntimeIdAt(std::int32_t x, std::int32_t y, std::int32_t z) const;
+
     /// 补发某一格（方块被挖掉后补回 ghost）。
+    ///
+    /// 只在「该格确实是空气」时才真的发 ghost：150 ms 的延迟窗口里这一格可能已经被填回
+    /// （投影打印机补回 / 另一次放置），那时再发 ghost 就是「客户端假方块 + 服务端真方块」，
+    /// 玩家走过去会被服务端弹回来。顺带记下「这一格刚被挖」的时间，供打印机做破坏冷却。
     void requestRepaint(std::int32_t x, std::int32_t y, std::int32_t z);
+
+    /// 该格是否在 `cooldownMs` 内被挖掉过（投影打印机据此让玩家先拆干净，不秒补）。
+    [[nodiscard]] bool
+    brokenRecently(std::int32_t x, std::int32_t y, std::int32_t z, std::int64_t cooldownMs) const;
 
     struct Stats {
         std::uint64_t shows{};
@@ -149,11 +230,18 @@ private:
     std::uint32_t internPalette(std::string const& stateText);
 
     static std::uint64_t packKey(std::int32_t x, std::int32_t y, std::int32_t z) noexcept;
+    static void
+    unpackKey(std::uint64_t key, std::int32_t& x, std::int32_t& y, std::int32_t& z) noexcept;
+
+    /// 子区块格号形式的重发（`afterGhostPush` 用，避免坐标来回换算）。
+    std::size_t repaintSubchunkKeyFor(::Player& player, std::uint64_t subKey);
 
     void repaintOne(std::int32_t x, std::int32_t y, std::int32_t z, std::uint32_t runtimeId);
 
     std::uint32_t               mId{};
     std::string                 mLabel;
+    /// `/lit load` 的玩家名（空 = 控制台创建）。可见性按它查 `ghost/share` 的开关。
+    std::string                 mOwner;
     bool                        mActive{};
     std::string                 mFile;
     std::vector<Entry>          mBlocks;
@@ -162,10 +250,27 @@ private:
     std::vector<EncodedPacket>  mShownPackets;
     std::unordered_map<std::string, std::unordered_set<std::uint64_t>> mViewers;
 
+    /// 已经被真实方块填上的格（`mBlocks` 下标）。旋转/卸载时清空。
+    std::unordered_set<std::uint32_t> mFilledCells;
+
+    /// 「这一格刚被挖掉」的时间戳（`mBlocks` 下标 → steady_clock 毫秒）。
+    /// 打印机用它做破坏冷却，避免和玩家的手动拆除抢同一格。
+    std::unordered_map<std::uint32_t, std::int64_t> mBrokenAt;
+
+    /// 包含已填充格的子区块（`packKey(x>>4, y>>4, z>>4)`），补偿时按子区块补 ghost。
+    std::unordered_set<std::uint64_t> mFilledSubchunks;
+
+    /// 子区块（16³）→ `mBlocks` 下标，按子区块补发 ghost 用（O(该子区块格数)）。
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> mSubchunkCells;
+
     /// 原始状态串调色板（`.mcstructure` 是 Bedrock 口径，`.litematic` 是 Java 口径）。
     std::vector<std::string>                       mPalette;
     std::unordered_map<std::string, std::uint32_t> mPaletteIds;
-    bool mIsBedrockSource{};
+
+    /// `mPalette` 的预解析结果（下标与 `mPalette` 一一对应）。
+    /// 轻松放置按格查目标方块时只做一次数组下标，运行期不再碰字符串与解析器。
+    std::vector<::Block const*> mPaletteBlocks;
+    bool                        mIsBedrockSource{};
 
     std::int32_t                mBaseX{};
     std::int32_t                mBaseZ{};

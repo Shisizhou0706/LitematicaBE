@@ -44,6 +44,12 @@ public:
     /// 立刻把队列清空（`/lit stop` 或关服时用）。
     void clear();
 
+    /// 丢掉某个玩家排队中未发的包（切私有 / 收回某人的显示时用）。
+    ///
+    /// 收回 ghost 必须「先清队列再发真方块」，否则排队中的 ghost 包会在收回之后到达，
+    /// 投影又冒出来。丢弃的包计入 `stats().dropped`。
+    void dropPlayer(std::string const& playerName);
+
     struct Stats {
         std::uint64_t ticks{};
         std::uint64_t queued{};

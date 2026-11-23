@@ -71,6 +71,17 @@ void DispatchQueue::clear() {
     mJobs.clear();
 }
 
+void DispatchQueue::dropPlayer(std::string const& playerName) {
+    for (auto it = mJobs.begin(); it != mJobs.end();) {
+        if (it->playerName != playerName) {
+            ++it;
+            continue;
+        }
+        mDropped += it->packets.size() - it->next;
+        it = mJobs.erase(it);
+    }
+}
+
 void DispatchQueue::drain(std::size_t budget) {
     if (mJobs.empty()) {
         return;

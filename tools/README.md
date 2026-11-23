@@ -23,6 +23,7 @@ python -m lit_tools mapping     # 生成 resources/data/generated/ghost_blocks.j
 | `mapgen` | 旧 `source/ghost_index.json` → 运行期 `ghost_map.json`；校验所有 ghost 名都真实存在于 BP | 运行期状态串解析失败（映射到不存在的方块） |
 | `fixture` | 合成 `tests/fixtures/mini.litematic` + `.expected.json` | 解析器回归没有基准（配合 `tools/parse-check/` 使用） |
 | `occlusion` | 从 Java 方块清单生成遮挡白名单 `occlusion.json`（表面剔除用），并体检误判 | 表面剔除会把玻璃/楼梯旁边的面也剔掉（投影缺块） |
+| `exportmap` | 从旧项目 `BlockMappingRegistry.js` + `resources/data/java_bedrock.json` 生成 `resources/data/export_map.json`（基岩名 → Java 名、基岩状态键 → Java 状态键），供 `.litematic` 导出用 | 导出 `.litematic` 时方块改名/状态名对照缺项，Litematica 里朝向丢失（内置族规则仍可兜住一部分） |
 
 `mapping` 的产物在 `resources/data/generated/` 下（已 gitignore）。需要固定版本时由发布流程打包，而不是提交进仓库。
 
@@ -40,6 +41,43 @@ xmake f -P . -y -p windows -a x64 -m release
 xmake -P . -y
 python check.py
 ```
+
+## write-check/
+
+`write-check/` 是**写入侧**（`.litematic` / `.mcstructure` 导出）的离线回归工程：把 `NbtTag` /
+`NbtWriter` / `LitematicWriter` / `McstructureWriter` 与两个解析器编成一个小 exe，构造合成区域后
+「写 → 读 → 逐格比对」。
+
+```bash
+cd tools/write-check
+xmake f -P . -y -p windows -a x64 -m release
+xmake -P . -y
+./build/windows/x64/release/lit_write_check.exe
+```
+
+覆盖位打包跨 long、litematic（x 最快）与 mcstructure（z 最快）两套索引顺序、大端/小端、gzip 头、
+`>256` 项的位宽下限修正、1×1 边界；当前 696 项检查全通过。
+
+`smoke-run.ps1` 是配套的本地测试服冒烟脚本（启动 BDS → 逐条发控制台命令 → 抄下控制台日志）。
+注意 LeviLamina 接管了控制台输入，stdin 重定向在部分组合下无效 —— 那种情况用插件的
+`LITEMATICABE_SELF_TEST` 环境变量做无人值守自检（见 `docs/selection-save.md` §9）。
+
+## xlsx-check/
+
+`xlsx-check/` 是**材料清单导出**（`/lit material`）的离线回归工程：把
+`core/report/XlsxWriter`（OOXML + zip，压缩走 miniz）、`core/report/MaterialCounter`（调色板聚合）
+与 `TextEncoding` 编成一个小 exe，先用 C++ 断言聚合口径，再用 openpyxl 把生成的 xlsx 真打开、逐格校验。
+
+```bash
+cd tools/xlsx-check
+xmake f -P . -y -p windows -a x64 -m release
+xmake -P . -y
+python check.py            # 需要 openpyxl
+```
+
+覆盖：颜色/木种变体分开、朝向与开关不拆行、越界调色板下标不崩、不可放置标记；
+zip 必需 part 与 CRC、`[Content_Types].xml` 关系、加粗表头、`#,##0` / `0.00%` 数字格式、
+冻结窗格、列宽、中文与 XML 特殊字符往返。详见 [xlsx-check/README.md](xlsx-check/README.md)。
 
 ## build.ps1
 

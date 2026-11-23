@@ -1,6 +1,7 @@
 #include "LitematicaBE/core/schematic/LitematicFile.h"
 
 #include "LitematicaBE/core/nbt/NbtTag.h"
+#include "LitematicaBE/core/schematic/PaletteBits.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -13,21 +14,6 @@ namespace {
 
 using nbt::Tag;
 using nbt::TagType;
-
-int bitsForPalette(std::size_t paletteSize) {
-    // Litematica/Masa 的规则：max(2, ceil(log2(n)))，并对大调色板做下限修正。
-    int bits = 2;
-    while ((1ull << bits) < paletteSize) {
-        ++bits;
-    }
-    if (paletteSize > 256 && bits < 9) {
-        bits = 9;
-    }
-    if (paletteSize > 512 && bits < 10) {
-        bits = 10;
-    }
-    return bits;
-}
 
 std::uint64_t readBits(std::vector<std::uint64_t> const& longs, std::uint64_t bitIndex, int bits) {
     auto const longIndex = static_cast<std::size_t>(bitIndex / 64);

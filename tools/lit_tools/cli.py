@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import addon, fixture, mapping, mapgen, occlusion, paths, placemap, version
+from . import addon, exportmap, fixture, mapping, mapgen, occlusion, paths, placemap, version
 
 
 def _cmd_version(_: argparse.Namespace) -> int:
@@ -98,6 +98,20 @@ def _cmd_placemap(args: argparse.Namespace) -> int:
     return placemap.main(['--header', str(args.header)] if args.header else [])
 
 
+def _cmd_exportmap(_: argparse.Namespace) -> int:
+    target, report = exportmap.write()
+    try:
+        shown = target.relative_to(paths.repo_root())
+    except ValueError:
+        shown = target
+    print(f"[ok] 已生成 {shown}")
+    print(f"     基岩名条目 {report.names}｜状态对照 {report.state_maps}｜别名 {report.aliases}")
+    print(f"     java_bedrock 补充 {report.from_java_bedrock}｜来源 {report.legacy or 'builtin'}")
+    for warning in report.warnings:
+        print(f"[!] {warning}", file=sys.stderr)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lit_tools", description="LitematicaBE 离线工具链")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -123,6 +137,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("occlusion", help="生成表面剔除用的遮挡白名单 resources/data/occlusion.json").set_defaults(
         func=_cmd_occlusion
     )
+    sub.add_parser(
+        "exportmap", help="生成导出 .litematic 用的基岩→Java 反查表 resources/data/export_map.json"
+    ).set_defaults(func=_cmd_exportmap)
     return parser
 
 

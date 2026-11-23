@@ -1,12 +1,18 @@
 #include "LitematicaBE/command/LitCommand.h"
 
 #include "LitematicaBE/command/ProbeActions.h"
+#include "LitematicaBE/command/ReportActions.h"
+#include "LitematicaBE/command/SaveActions.h"
 #include "LitematicaBE/command/SchematicActions.h"
 
+#include "LitematicaBE/core/save/SaveConfig.h"
 #include "LitematicaBE/core/util/TextEncoding.h"
+#include "LitematicaBE/easyplace/EasyPlace.h"
 #include "LitematicaBE/ghost/ProjectionManager.h"
+#include "LitematicaBE/ghost/ShareSwitch.h"
 #include "LitematicaBE/ghost/Wireframe.h"
 #include "LitematicaBE/hologram/ShapeDrawer.h"
+#include "LitematicaBE/printer/Printer.h"
 
 #include "ll/api/command/CommandHandle.h"
 #include "ll/api/command/CommandRegistrar.h"
@@ -16,7 +22,9 @@
 #include "mc/server/commands/CommandPermissionLevel.h"
 #include "mc/world/actor/player/Player.h"
 
+#include <cctype>
 #include <exception>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -25,24 +33,41 @@ namespace litematicabe::command {
 /// 子命令；枚举成员名就是命令补全里的候选。
 enum class LitAction : int {
     probe  = 0,
-    send   = 1,
-    batch  = 2,
-    info   = 3,
-    load   = 4,
-    reload = 5,
-    list   = 6,
-    layer  = 7,
-    unload = 8,
-    resend = 9,
-    rotate = 10,
-    projects = 11,
-    select   = 12,
-    remove   = 13,
-    place    = 14,
-    replace  = 15,
-    diag     = 16,
-    plan     = 17,
-    box      = 18,
+    info   = 1,
+    load   = 2,
+    reload = 3,
+    list   = 4,
+    layer  = 5,
+    unload = 6,
+    resend = 7,
+    rotate = 8,
+    projects = 9,
+    select   = 10,
+    remove   = 11,
+    place    = 12,
+    diag     = 13,
+    box      = 14,
+    easyplace = 15,
+    printer   = 16,
+    share     = 17,
+    sel       = 18,
+    save      = 19,
+    saveat    = 20,
+    savediag  = 21,
+    saveinfo  = 22,
+    material  = 23, ///< 当前选中投影的材料清单（导出 xlsx）
+    mat       = 24, ///< `material` 的简写
+    materials = 25, ///< `material` 的另一种写法
+};
+
+/// `/lit save <kind> <名字>` 的格式档位（枚举成员名就是补全候选）。
+///
+/// 用枚举而不是自由字符串：LL 的 string 参数会吃掉任意 token，
+/// 那会让 `/lit layer 1 2` 被误解析成 save 的 `(file="1", format="2")`。
+enum class SaveKindArg : int {
+    stru = 0, ///< `.mcstructure`（基岩结构文件）
+    lite = 1, ///< `.litematic`（Java / Litematica）
+    both = 2, ///< 两种都写（世界只扫描一遍）
 };
 
 struct LitParams {
@@ -76,9 +101,54 @@ struct LitLayerOneParams {
     int       from;
 };
 
+/// `/lit save <stru|lite|both> <名字>`：选区保存，格式必须显式给。
+struct LitSaveParams {
+    LitAction     action;
+    SaveKindArg   kind;
+    std::string   file;
+};
+
+/// `/lit saveat <stru|lite|both> <名字> <x1> <y1> <z1> <x2> <y2> <z2>`。
+struct LitSaveAtParams {
+    LitAction     action;
+    SaveKindArg   kind;
+    std::string   file;
+    int           x1;
+    int           y1;
+    int           z1;
+    int           x2;
+    int           y2;
+    int           z2;
+};
+
+/// `/lit saveat <名字> <x1> <y1> <z1> <x2> <y2> <z2>`：旧形式（不写格式 = `.mcstructure`）。
+struct LitSaveAtQuickParams {
+    LitAction   action;
+    std::string file;
+    int         x1;
+    int         y1;
+    int         z1;
+    int         x2;
+    int         y2;
+    int         z2;
+};
+
 namespace {
 
 namespace util = litematicabe::util;
+
+/// 命令行格式档位 → 内部格式。
+core::save::Format formatOf(SaveKindArg kind) {
+    switch (kind) {
+    case SaveKindArg::lite:
+        return core::save::Format::Litematic;
+    case SaveKindArg::both:
+        return core::save::Format::Both;
+    case SaveKindArg::stru:
+    default:
+        return core::save::Format::Mcstructure;
+    }
+}
 
 ::Player* playerOf(::CommandOrigin const& origin) {
     auto* actor = origin.getEntity();
@@ -101,25 +171,44 @@ void guard(::CommandOutput& output, Fn&& body) noexcept {
     }
 }
 
+/// `/lit share <on|off>` 的参数解析（也接受 true/false/1/0/开/关/共享/私有）。
+bool parseShareArg(std::string const& raw, bool& out) {
+    std::string text;
+    text.reserve(raw.size());
+    for (char const c : raw) {
+        text.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    if (text == "on" || text == "true" || text == "1" || text == "yes" || text == "开" || text == "共享") {
+        out = true;
+        return true;
+    }
+    if (text == "off" || text == "false" || text == "0" || text == "no" || text == "关" || text == "私有") {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
+/// 记下开关 + 立即按新可见性重发 / 收回，并把结果说给玩家听。
+void applyShare(::CommandOutput& output, ::Player& player, bool shared) {
+    auto const name = player.getRealName();
+    ghost::share::setShared(name, shared);
+    ghost::ProjectionManager::getInstance().applyShareChange(player, shared);
+
+    if (shared) {
+        output.success("§b[投影共享]§r §a开§r：你放置的投影所有在线玩家都能看到");
+        output.success("    §7已显示的层立刻补发给全体；之后新 load 的投影同样共享§r");
+        return;
+    }
+    output.success("§b[投影共享]§r §e关§r：只有你自己能看到你放置的投影（旁人屏幕上的已当场收回）");
+    output.success("    §7包围盒线框在私有模式下不显示（全局形状，没法按玩家隔离）；切层/补发/心跳也只发给你§r");
+}
+
 void runWithoutFile(::CommandOutput& output, ::CommandOrigin const& origin, LitAction action) {
     switch (action) {
     case LitAction::probe:
         probe::printProbe(output);
         return;
-    case LitAction::send:
-    case LitAction::batch: {
-        auto* player = playerOf(origin);
-        if (player == nullptr) {
-            output.error("该子命令需要以玩家身份执行");
-            return;
-        }
-        if (action == LitAction::send) {
-            probe::sendOne(output, *player);
-        } else {
-            probe::sendBatch(output, *player);
-        }
-        return;
-    }
     case LitAction::info:
     case LitAction::load:
         output.error("该子命令需要文件参数：/lit {} <file>", action == LitAction::info ? "info" : "load");
@@ -136,18 +225,107 @@ void runWithoutFile(::CommandOutput& output, ::CommandOrigin const& origin, LitA
     case LitAction::diag:
         probe::diagnose(output);
         return;
-    case LitAction::plan: {
-        auto* session = ghost::ProjectionManager::getInstance().active();
-        if (session == nullptr) {
-            output.error("没有活动会话：先 /lit load <file> [x y z]");
+    case LitAction::easyplace: {
+        auto* player = playerOf(origin);
+        if (player == nullptr) {
+            output.error("该子命令需要以玩家身份执行（开关按玩家记录）");
             return;
         }
-        auto const bounds = session->bounds();
-        schematic::planProjection(output, bounds.from, bounds.to);
+        if (!easyplace::installed()) {
+            output.error("轻松放置：hook 没有挂上（详情见服务器日志）");
+            return;
+        }
+        auto const name = player->getRealName();
+        bool const on   = easyplace::toggle(name);
+        if (on) {
+            output.success(
+                "§b[轻松放置]§r 已开启：在投影格上放错方块会直接落成投影要求的那一个（当前 {} 人在用）",
+                easyplace::enabledCount()
+            );
+            output.success("    §7同类方块（如楼梯朝向）只改状态；不同种类会从背包扣 1 个对应方块，"
+                           "没有就阻止这次放置§r");
+        } else {
+            output.success(
+                "§b[轻松放置]§r 已关闭（当前 {} 人在用）",
+                easyplace::enabledCount()
+            );
+        }
+        return;
+    }
+    case LitAction::printer: {
+        auto* player = playerOf(origin);
+        if (player == nullptr) {
+            output.error("该子命令需要以玩家身份执行（开关按玩家记录）");
+            return;
+        }
+        if (!printer::installed()) {
+            output.error("投影打印机：模块没有初始化（详情见服务器日志）");
+            return;
+        }
+        bool const on = printer::toggle(player->getRealName());
+        if (!on) {
+            output.success("§b[投影打印机]§r 已关闭（当前 {} 人在用）", printer::enabledCount());
+            return;
+        }
+
+        auto const& opts  = printer::options();
+        auto const  stats = printer::stats();
+        output.success("§b[投影打印机]§r 已开启（当前 {} 人在用）", printer::enabledCount());
+        output.success(
+            "    §7范围：半径 {} 格｜每 {} ms 最多 {} 格｜{}｜{}§r",
+            opts.range,
+            opts.intervalMs,
+            opts.maxPerRound,
+            opts.layerLimited ? "只打印 /lit layer 显示的层" : "打印整份投影",
+            opts.onlyAir ? "只放空气格" : "空气 + 可替换方块"
+        );
+        output.success(
+            "    §7扣料：{}｜累计已放 {} 格 / 缺料 {} 次 / 失败 {} 次§r",
+            opts.creativeFree ? "生存扣 1 格、创造不扣" : "所有模式都扣",
+            stats.placed,
+            stats.noItem,
+            stats.writeFailed
+        );
+        return;
+    }
+    case LitAction::share: {
+        auto* player = playerOf(origin);
+        if (player == nullptr) {
+            output.error("该子命令需要以玩家身份执行（开关按玩家记录）");
+            return;
+        }
+        applyShare(output, *player, ghost::share::toggle(player->getRealName()));
         return;
     }
     case LitAction::resend:
         schematic::resendAll(output);
+        return;
+    case LitAction::sel:
+        savetool::showSelection(output, playerOf(origin));
+        return;
+    case LitAction::saveinfo:
+        savetool::printInfo(output);
+        return;
+    case LitAction::savediag: {
+        auto* player = playerOf(origin);
+        if (player == nullptr) {
+            output.error("savediag 需要以玩家身份执行（默认检查脚下一格）");
+            return;
+        }
+        auto const pos = player->getFeetBlockPos();
+        savetool::diagnose(output, player, pos.x, pos.y - 1, pos.z);
+        return;
+    }
+    case LitAction::save:
+        output.error("用法：/lit save stru|lite|both <名字>（格式必须显式给）");
+        return;
+    case LitAction::material:
+    case LitAction::mat:
+    case LitAction::materials:
+        report::exportMaterials(output);
+        return;
+    case LitAction::saveat:
+        output.error("用法：/lit saveat [stru|lite|both] <名字> <x1> <y1> <z1> <x2> <y2> <z2>");
         return;
     case LitAction::box: {
         auto& wireframe = ghost::Wireframe::getInstance();
@@ -169,21 +347,14 @@ void runWithoutFile(::CommandOutput& output, ::CommandOrigin const& origin, LitA
     case LitAction::rotate:
         schematic::rotateProjection(output, playerOf(origin));
         return;
-    case LitAction::place:
-    case LitAction::replace: {
+    case LitAction::place: {
         auto* session = ghost::ProjectionManager::getInstance().active();
         if (session == nullptr) {
             output.error("没有活动会话：先 /lit load <file> [x y z]");
             return;
         }
         auto const bounds = session->bounds();
-        schematic::placeProjection(
-            output,
-            playerOf(origin),
-            bounds.from,
-            bounds.to,
-            action == LitAction::replace
-        );
+        schematic::placeProjection(output, playerOf(origin), bounds.from, bounds.to);
         return;
     }
     case LitAction::unload: {
@@ -211,16 +382,6 @@ void runWithFile(
     case LitAction::info:
         schematic::printInfo(output, file);
         return;
-    case LitAction::send: {
-        auto* player = playerOf(origin);
-        if (player == nullptr) {
-            output.error("该子命令需要以玩家身份执行");
-            return;
-        }
-        // /lit send lit:g_stone 用来单独验证某个 ghost 方块能不能显示。
-        probe::sendOne(output, *player, file);
-        return;
-    }
     case LitAction::load: {
         auto* player = playerOf(origin);
         if (player == nullptr) {
@@ -230,6 +391,39 @@ void runWithFile(
         schematic::loadProjection(output, *player, file);
         return;
     }
+    case LitAction::share: {
+        auto* player = playerOf(origin);
+        if (player == nullptr) {
+            output.error("该子命令需要以玩家身份执行（开关按玩家记录）");
+            return;
+        }
+        bool shared = true;
+        if (!parseShareArg(file, shared)) {
+            output.error("用法：/lit share [on|off]（不带参数是切换；on = 全体可见，off = 只有自己可见）");
+            return;
+        }
+        applyShare(output, *player, shared);
+        return;
+    }
+    case LitAction::sel: {
+        if (file == "clear" || file == "清空" || file == "清除") {
+            savetool::clearSelection(output, playerOf(origin));
+            return;
+        }
+        output.error("用法：/lit sel [clear]（选点用手持木剑右键方块两次）");
+        return;
+    }
+    case LitAction::save:
+        output.error("格式必须显式给出：/lit save stru <名字> 或 /lit save lite <名字>（也可以 both）");
+        return;
+    case LitAction::material:
+    case LitAction::mat:
+    case LitAction::materials:
+        output.error(
+            "材料清单统计的是「当前选中投影」：/lit material（不带参数）。"
+            "要统计别的文件先 /lit load <file>，再用 /lit select <id> 选中"
+        );
+        return;
     default:
         output.error("该子命令不接受文件参数");
         return;
@@ -241,6 +435,7 @@ void runWithFile(
 void registerLitCommand() {
     auto& registrar = ll::command::CommandRegistrar::getInstance(false);
     registrar.tryRegisterEnum<LitAction>();
+    registrar.tryRegisterEnum<SaveKindArg>();
 
     auto& cmd = registrar.getOrCreateCommand("lit", "LitematicaBE 投影插件", ::CommandPermissionLevel::Any);
 
@@ -268,18 +463,12 @@ void registerLitCommand() {
         .required("to")
         .execute([](::CommandOrigin const& origin, ::CommandOutput& output, LitLayerParams const& params) {
             guard(output, [&] {
-                if (params.action == LitAction::place || params.action == LitAction::replace) {
-                    schematic::placeProjection(
-                        output,
-                        playerOf(origin),
-                        params.from,
-                        params.to,
-                        params.action == LitAction::replace
-                    );
+                if (params.action == LitAction::place) {
+                    schematic::placeProjection(output, playerOf(origin), params.from, params.to);
                     return;
                 }
                 if (params.action != LitAction::layer) {
-                    output.error("只有 layer / place / replace 接受层号参数");
+                    output.error("只有 layer / place 接受层号参数");
                     return;
                 }
                 auto* player = playerOf(origin);
@@ -303,6 +492,21 @@ void registerLitCommand() {
                 }
                 if (params.action == LitAction::remove) {
                     schematic::removeProjection(output, params.from, playerOf(origin));
+                    return;
+                }
+                if (params.action == LitAction::share) {
+                    // /lit share 1 → 共享；/lit share 0 → 私有（on/off 的另一半别名）。
+                    auto* player = playerOf(origin);
+                    if (player == nullptr) {
+                        output.error("该子命令需要以玩家身份执行（开关按玩家记录）");
+                        return;
+                    }
+                    applyShare(output, *player, params.from != 0);
+                    return;
+                }
+                if (params.action == LitAction::place) {
+                    // /lit place 100 → 只放这一层（与 /lit place 100 100 等价）。
+                    schematic::placeProjection(output, playerOf(origin), params.from, params.from);
                     return;
                 }
                 if (params.action != LitAction::layer) {
@@ -332,6 +536,83 @@ void registerLitCommand() {
                     return;
                 }
                 schematic::loadProjectionAt(output, params.file, params.x, params.y, params.z);
+            });
+        });
+
+    cmd.overload<LitSaveParams>()
+        .required("action")
+        .required("kind")
+        .required("file")
+        .execute([](::CommandOrigin const& origin, ::CommandOutput& output, LitSaveParams const& params) {
+            guard(output, [&] {
+                if (params.action != LitAction::save) {
+                    output.error("只有 save 接受格式参数：/lit save stru|lite|both <名字>");
+                    return;
+                }
+                savetool::saveWithSelection(output, playerOf(origin), params.file, formatOf(params.kind));
+            });
+        });
+
+    cmd.overload<LitSaveAtParams>()
+        .required("action")
+        .required("kind")
+        .required("file")
+        .required("x1")
+        .required("y1")
+        .required("z1")
+        .required("x2")
+        .required("y2")
+        .required("z2")
+        .execute([](::CommandOrigin const& origin, ::CommandOutput& output, LitSaveAtParams const& params) {
+            guard(output, [&] {
+                if (params.action != LitAction::saveat) {
+                    output.error("只有 saveat 接受这段坐标参数");
+                    return;
+                }
+                savetool::saveAt(
+                    output,
+                    playerOf(origin),
+                    params.file,
+                    formatOf(params.kind),
+                    params.x1,
+                    params.y1,
+                    params.z1,
+                    params.x2,
+                    params.y2,
+                    params.z2
+                );
+            });
+        });
+
+    cmd.overload<LitSaveAtQuickParams>()
+        .required("action")
+        .required("file")
+        .required("x1")
+        .required("y1")
+        .required("z1")
+        .required("x2")
+        .required("y2")
+        .required("z2")
+        .execute([](::CommandOrigin const& origin, ::CommandOutput& output, LitSaveAtQuickParams const& params) {
+            guard(output, [&] {
+                if (params.action != LitAction::saveat) {
+                    output.error("只有 saveat 接受这段坐标参数");
+                    return;
+                }
+                // 不写格式 = 基岩结构文件（`.mcstructure`），回执里会写明。
+                output.success("§7未指定格式，按 stru（.mcstructure）保存§r");
+                savetool::saveAt(
+                    output,
+                    playerOf(origin),
+                    params.file,
+                    core::save::Format::Mcstructure,
+                    params.x1,
+                    params.y1,
+                    params.z1,
+                    params.x2,
+                    params.y2,
+                    params.z2
+                );
             });
         });
 }

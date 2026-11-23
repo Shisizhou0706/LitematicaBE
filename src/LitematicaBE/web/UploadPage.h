@@ -3,8 +3,7 @@
 namespace litematicabe::web {
 
 /// 上传页（内嵌，无需外部文件）。
-/// 只做一件事：把 .litematic / .mcstructure 传到插件的 schematics/ 目录，
-/// 然后提示玩家回游戏执行 `/lit load <文件名>`。
+/// 把 .litematic / .mcstructure 传到插件的 schematics/ 目录
 inline constexpr char const* kUploadPage = R"HTML(<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -36,7 +35,7 @@ inline constexpr char const* kUploadPage = R"HTML(<!doctype html>
 </head>
 <body>
 <h1>LitematicaBE 投影上传</h1>
-<p>把 <code>.litematic</code> 拖进下面的框，上传后回游戏执行 <code>/lit load 文件名</code>（或 <code>/lit info 文件名</code> 先看统计）。</p>
+<p>把 <code>.litematic</code> 或 <code>.mcstructure</code> 文件放入上传框内，上传后回游戏执行 <code>/lit load 文件名</code>（或 <code>/lit info 文件名</code> 查看统计）。</p>
 
 <div class="row">
   <label>访问令牌</label>
@@ -74,7 +73,7 @@ input.addEventListener('change', () => { if (input.files.length) upload(input.fi
 
 async function upload(file) {
   const token = tokenInput.value.trim();
-  if (!token) { say('先填访问令牌（在服务端 plugins/LitematicaBE/config/upload.json 里）', 'err'); return; }
+  if (!token) { say('请先填写访问令牌（在服务端 plugins/LitematicaBE/config/upload.json 记录）', 'err'); return; }
   localStorage.setItem('lit_token', token);
 
   say(`上传中：${file.name}（${(file.size / 1024).toFixed(1)} KB）…`);
@@ -88,7 +87,7 @@ async function upload(file) {
       say('失败：' + (data.error || resp.status), 'err');
       return;
     }
-    say(`已上传：${data.file}（${(data.size / 1024).toFixed(1)} KB）\n回游戏执行：/lit info ${data.file}\n        或：/lit load ${data.file}`, 'ok');
+    say(`已上传：${data.file}（${(data.size / 1024).toFixed(1)} KB）\n返回游戏执行：/lit info ${data.file}\n        或：/lit load ${data.file}`, 'ok');
   } catch (err) {
     say('上传出错：' + err, 'err');
   }

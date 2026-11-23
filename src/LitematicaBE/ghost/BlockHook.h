@@ -2,9 +2,30 @@
 
 #include <cstdint>
 
+class Block;
+class BlockPos;
 class BlockSource;
 
 namespace litematicabe::ghost {
+
+/// `$setBlock` 的前置判定结果（轻松放置用）。
+enum class SetBlockVerdict : std::uint8_t {
+    Pass,    ///< 不干预，按原方块写入
+    Replace, ///< 改写为 out 指向的方块（引擎只发一次更新，不闪帧）
+    Deny,    ///< 拒绝本次写入（返回 false，引擎不会扣物品）
+};
+
+/// 前置过滤回调：返回 Replace 时必须写 out。回调里禁止再调 `setBlock`（会重入）。
+using SetBlockFilter = SetBlockVerdict (*)(
+    ::BlockSource&,
+    ::BlockPos const&,
+    ::Block const&,
+    ::Block const*&
+);
+
+/// 注入/清除前置过滤（传 nullptr 关闭）。默认没有过滤，行为与之前完全一致。
+void setBlockFilter(SetBlockFilter fn);
+[[nodiscard]] SetBlockFilter blockFilter();
 
 /// 方块变化的底层 hook。
 ///
@@ -16,7 +37,7 @@ void installBlockChangedHook();
 void uninstallBlockChangedHook();
 
 [[nodiscard]] bool          blockHookInstalled();
-[[nodiscard]] [[nodiscard]] std::uint64_t blockSetCalls();
+std::uint64_t               blockSetCalls();
 
 /// 布置 BlockSource 捕获 hook。
 ///

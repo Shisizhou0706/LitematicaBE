@@ -6,6 +6,7 @@
 #include "LitematicaBE/ghost/BlockHook.h"
 #include "LitematicaBE/ghost/DispatchQueue.h"
 #include "LitematicaBE/ghost/PacketSender.h"
+#include "LitematicaBE/ghost/ShareSwitch.h"
 #include "LitematicaBE/ghost/SurfaceCull.h"
 #include "LitematicaBE/ghost/Wireframe.h"
 #include "LitematicaBE/mapping/BlockStateResolve.h"
@@ -37,6 +38,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace litematicabe::ghost {
@@ -49,6 +51,14 @@ constexpr std::size_t kMaxCollectBlocks = 400000;
 
 /// 放置时的方块更新标志：0x1 通知邻居 + 0x2 同步到客户端。
 constexpr int kPlaceUpdateFlags = 3;
+
+/// 单次 `setBlock` 的等待窗口（挖掉后补 ghost / 放方块后压回真方块）。
+constexpr std::int64_t kRepaintDelayMs = 150;
+
+std::int64_t nowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 
 std::string toUtf8String(std::filesystem::path const& path) { return util::toUtf8(path); }
 
@@ -216,7 +226,34 @@ bool ProjectionSession::begin(
         mIndex.emplace(packKey(mBlocks[i].x, mBlocks[i].y, mBlocks[i].z), i);
     }
 
+    // 子区块索引：放置后只需重编「那一个子区块」，不必扫全表。
+    mSubchunkCells.clear();
+    for (std::uint32_t i = 0; i < mBlocks.size(); ++i) {
+        auto const& e = mBlocks[i];
+        mSubchunkCells[packKey(e.x >> 4, e.y >> 4, e.z >> 4)].push_back(i);
+    }
+    mFilledCells.clear();
+    mBrokenAt.clear();
+
     mFile   = toUtf8String(path.filename());
+
+    // 轻松放置：把调色板一次性解析成「可放置的 Block」。
+    // 一份投影的调色板通常只有几百项，运行时按格查询就退化成一次数组下标，
+    // 不再有字符串解析、哈希和分配（见 easyplace/EasyPlace.cpp）。
+    mPaletteBlocks.assign(mPalette.size(), nullptr);
+    {
+        auto&       placer = mapping::PlaceResolve::getInstance();
+        std::size_t usable = 0;
+        placer.ensureLoaded();
+        for (std::size_t i = 0; i < mPalette.size(); ++i) {
+            auto const resolved = placer.resolve(mPalette[i], mIsBedrockSource);
+            mPaletteBlocks[i]  = resolved.block;
+            if (resolved.block != nullptr) {
+                ++usable;
+            }
+        }
+        output.success("轻松放置调色板：{} 项（可放置 {} 项）", mPalette.size(), usable);
+    }
     mBounds = LayerRange{minY, maxY};
     mShown  = LayerRange{minY, minY - 1}; // 空区间
 
@@ -299,8 +336,12 @@ std::size_t ProjectionSession::clear(::CommandOutput& output, ::Player& player) 
     auto const                 encoded = BatchEncoder::getInstance().encode(changes, packets);
     if (encoded > 0) {
         // 同步发：收回必须立刻生效，不能依赖 tick 队列。
+        // 只发给「本来能看到这份投影」的玩家：私有会话的旁人屏幕上没有 ghost，发了也是白流量。
         auto& sender = PacketSender::getInstance();
         level->forEachPlayer([&](::Player& p) {
+            if (!visibleTo(p.getRealName())) {
+                return true;
+            }
             for (auto const& packet : packets) {
                 sender.send(p, packet.packetId, packet.body);
             }
@@ -395,6 +436,10 @@ std::size_t ProjectionSession::showLayers(
     std::size_t const syncCount = std::min<std::size_t>(1, packets.size());
 
     level->forEachPlayer([&](::Player& p) {
+        // 私有会话：旁人一包都不发（含镜像登记），这样他们屏幕上不会凭空冒出投影。
+        if (!visibleTo(p.getRealName())) {
+            return true;
+        }
         ++players;
         for (std::size_t i = 0; i < syncCount; ++i) {
             if (sender.send(p, packets[i].packetId, packets[i].body)) {
@@ -415,27 +460,33 @@ std::size_t ProjectionSession::showLayers(
             auto const& e = mBlocks[index];
             keys.insert(packKey(e.x, e.y, e.z));
         }
+        // 刚推过去的 ghost 会盖住玩家已经放好的真方块：立刻压回来。
+        afterGhostPush(p);
         return true;
     });
 
+    auto const visibilityNote = privateMode() ? "｜§e私有：只发给你自己§r" : "";
+
     if (players == 0) {
         output.success(
-            "§b[层就绪]§r 层 {}~{}：{} 格 → {} 包（当前没有在线玩家，未发送；进入后重新执行即可）",
+            "§b[层就绪]§r 层 {}~{}：{} 格 → {} 包（当前没有在线玩家，未发送；进入后重新执行即可）{}",
             low,
             high,
             changes.size(),
-            encoded
+            encoded,
+            visibilityNote
         );
         return encoded;
     }
     output.success(
-        "§b[层显示]§r 层 {}~{}：{} 格 → {} 包 × {} 名玩家（已发 {} 包）",
+        "§b[层显示]§r 层 {}~{}：{} 格 → {} 包 × {} 名玩家（已发 {} 包）{}",
         low,
         high,
         changes.size(),
         encoded,
         players,
-        sent
+        sent,
+        visibilityNote
     );
     return encoded;
 }
@@ -452,11 +503,40 @@ std::uint64_t ProjectionSession::packKey(std::int32_t x, std::int32_t y, std::in
     return (ux << 42) | (uy << 21) | uz;
 }
 
-bool ProjectionSession::contains(std::int32_t x, std::int32_t y, std::int32_t z) const {
-    if (!mActive) {
+void ProjectionSession::unpackKey(std::uint64_t key, std::int32_t& x, std::int32_t& y, std::int32_t& z) noexcept {
+    constexpr std::uint64_t kMask = 0x1FFFFF;
+    auto const              sx    = static_cast<std::uint32_t>((key >> 42) & kMask);
+    auto const              sy    = static_cast<std::uint32_t>((key >> 21) & kMask);
+    auto const              sz    = static_cast<std::uint32_t>(key & kMask);
+    x = static_cast<std::int32_t>(sx >= 0x100000 ? static_cast<std::int64_t>(sx) - 0x200000 : sx);
+    y = static_cast<std::int32_t>(sy >= 0x100000 ? static_cast<std::int64_t>(sy) - 0x200000 : sy);
+    z = static_cast<std::int32_t>(sz >= 0x100000 ? static_cast<std::int64_t>(sz) - 0x200000 : sz);
+}
+
+bool ProjectionSession::contains(std::int32_t x, std::int32_t y, std::int32_t z) const {    if (!mActive) {
         return false;
     }
     return mIndex.find(packKey(x, y, z)) != mIndex.end();
+}
+
+bool ProjectionSession::targetCell(std::int32_t x, std::int32_t y, std::int32_t z, ::Block const*& out) const {
+    out = nullptr;
+    if (!mActive) {
+        return false;
+    }
+    // AABB 先拒：绝大多数「玩家随手放方块」都在这条线上返回，不碰哈希表。
+    if (x < mMinX || x > mMaxX || z < mMinZ || z > mMaxZ || y < mBounds.from || y > mBounds.to) {
+        return false;
+    }
+    auto const it = mIndex.find(packKey(x, y, z));
+    if (it == mIndex.end()) {
+        return false;
+    }
+    auto const paletteId = mBlocks[it->second].paletteId;
+    if (paletteId < mPaletteBlocks.size()) {
+        out = mPaletteBlocks[paletteId];
+    }
+    return true;
 }
 
 void ProjectionSession::requestRepaint(std::int32_t x, std::int32_t y, std::int32_t z) {
@@ -464,8 +544,172 @@ void ProjectionSession::requestRepaint(std::int32_t x, std::int32_t y, std::int3
     if (it == mIndex.end()) {
         return;
     }
-    auto const& entry = mBlocks[it->second];
+    // 挖掉了真方块 → 该格重新变成「需要 ghost」的状态。
+    mFilledCells.erase(it->second);
+    // 记下时间：打印机据此判断「玩家刚拆过」，冷却期内不抢着补回去。
+    mBrokenAt[it->second] = nowMs();
+    auto const& entry     = mBlocks[it->second];
     repaintOne(entry.x, entry.y, entry.z, entry.runtimeId);
+}
+
+bool ProjectionSession::brokenRecently(
+    std::int32_t x,
+    std::int32_t y,
+    std::int32_t z,
+    std::int64_t cooldownMs
+) const {
+    if (cooldownMs <= 0) {
+        return false;
+    }
+    auto const it = mIndex.find(packKey(x, y, z));
+    if (it == mIndex.end()) {
+        return false;
+    }
+    auto const broken = mBrokenAt.find(it->second);
+    if (broken == mBrokenAt.end()) {
+        return false;
+    }
+    return nowMs() - broken->second < cooldownMs;
+}
+
+void ProjectionSession::markFilled(std::int32_t x, std::int32_t y, std::int32_t z) {
+    if (!mActive) {
+        return;
+    }
+    if (auto const it = mIndex.find(packKey(x, y, z)); it != mIndex.end()) {
+        mFilledCells.insert(it->second);
+        mFilledSubchunks.insert(packKey(x >> 4, y >> 4, z >> 4));
+    }
+}
+
+bool ProjectionSession::isFilled(std::int32_t x, std::int32_t y, std::int32_t z) const {
+    auto const it = mIndex.find(packKey(x, y, z));
+    return it != mIndex.end() && mFilledCells.find(it->second) != mFilledCells.end();
+}
+
+std::uint32_t
+ProjectionSession::ghostRuntimeIdAt(std::int32_t x, std::int32_t y, std::int32_t z) const {
+    auto const it = mIndex.find(packKey(x, y, z));
+    if (it == mIndex.end()) {
+        return 0;
+    }
+    return mBlocks[it->second].runtimeId;
+}
+
+std::size_t ProjectionSession::correctFilledFor(::Player& player) {
+    if (!mActive || mFilledCells.empty()) {
+        return 0;
+    }
+    if (!visibleTo(player.getRealName())) {
+        return 0;
+    }
+    auto level = ::ll::service::getLevel();
+    if (!level) {
+        return 0;
+    }
+    auto dimension = level->getDimension(player.getDimensionId()).lock();
+    if (!dimension) {
+        return 0;
+    }
+    auto& source = dimension->getBlockSourceFromMainChunkSource();
+
+    // 读世界而不是读调色板：玩家可能放的是「风险闸放行」的非投影方块，
+    // 那种格子的真实方块只有世界知道。
+    std::vector<HoloBlockChange> changes;
+    changes.reserve(mFilledCells.size());
+    for (auto const index : mFilledCells) {
+        auto const& entry = mBlocks[index];
+        auto const& block = source.getBlock(::BlockPos{entry.x, entry.y, entry.z});
+        if (block.isAir()) {
+            continue;
+        }
+        changes.push_back(
+            {entry.x,
+             entry.y,
+             entry.z,
+             static_cast<std::uint32_t>(block.mNetworkId),
+             BatchEncoder::kUpdateFlags,
+             0,
+             0}
+        );
+    }
+    if (changes.empty()) {
+        return 0;
+    }
+
+    std::vector<EncodedPacket> packets;
+    if (BatchEncoder::getInstance().encode(changes, packets) == 0) {
+        return 0;
+    }
+    auto&       sender = PacketSender::getInstance();
+    std::size_t sent   = 0;
+    for (auto const& packet : packets) {
+        if (sender.send(player, packet.packetId, packet.body)) {
+            ++sent;
+        }
+    }
+    return sent;
+}
+
+std::size_t ProjectionSession::repaintSubchunkFor(
+    ::Player&    player,
+    std::int32_t x,
+    std::int32_t y,
+    std::int32_t z
+) {
+    return repaintSubchunkKeyFor(player, packKey(x >> 4, y >> 4, z >> 4));
+}
+
+std::size_t ProjectionSession::repaintSubchunkKeyFor(::Player& player, std::uint64_t subKey) {
+    if (!mActive) {
+        return 0;
+    }
+    if (!visibleTo(player.getRealName())) {
+        return 0;
+    }
+    auto const subIt = mSubchunkCells.find(subKey);
+    if (subIt == mSubchunkCells.end()) {
+        return 0;
+    }
+
+    std::vector<HoloBlockChange> changes;
+    changes.reserve(subIt->second.size());
+    for (auto const index : subIt->second) {
+        if (mFilledCells.find(index) != mFilledCells.end()) {
+            continue; // 这一格是真方块，不能拿 ghost 盖回去
+        }
+        auto const& entry = mBlocks[index];
+        changes.push_back({entry.x, entry.y, entry.z, entry.runtimeId, BatchEncoder::kUpdateFlags, 0, 0});
+    }
+    if (changes.empty()) {
+        return 0;
+    }
+
+    std::vector<EncodedPacket> packets;
+    if (BatchEncoder::getInstance().encode(changes, packets) == 0) {
+        return 0;
+    }
+    auto&       sender = PacketSender::getInstance();
+    std::size_t sent   = 0;
+    for (auto const& packet : packets) {
+        if (sender.send(player, packet.packetId, packet.body)) {
+            ++sent;
+        }
+    }
+    return sent;
+}
+
+void ProjectionSession::afterGhostPush(::Player& player) {
+    if (!mActive || mFilledCells.empty()) {
+        return;
+    }
+    if (!visibleTo(player.getRealName())) {
+        return;
+    }
+    correctFilledFor(player);
+    for (auto const subKey : mFilledSubchunks) {
+        repaintSubchunkKeyFor(player, subKey);
+    }
 }
 
 void ProjectionSession::repaintOne(std::int32_t x, std::int32_t y, std::int32_t z, std::uint32_t runtimeId) {
@@ -476,6 +720,14 @@ void ProjectionSession::repaintOne(std::int32_t x, std::int32_t y, std::int32_t 
             if (!mActive) {
                 return;
             }
+
+            // 这 150ms 里这一格可能又被真方块填上了（投影打印机补回 / 另一个玩家放回）：
+            // 再发 ghost 就是「客户端假方块 + 服务端真方块」的叠加态 —— 客户端能穿过去
+            // （ghost 的 collision_box 是 false），服务端却把玩家弹回来。
+            if (isFilled(x, y, z)) {
+                return;
+            }
+
             std::vector<HoloBlockChange> changes{
                 {x, y, z, runtimeId, BatchEncoder::kUpdateFlags, 0, 0}
             };
@@ -490,6 +742,16 @@ void ProjectionSession::repaintOne(std::int32_t x, std::int32_t y, std::int32_t 
             auto&       sender = PacketSender::getInstance();
             std::size_t sent   = 0;
             level->forEachPlayer([&](::Player& player) {
+                // 私有会话：旁人收不到补格包。
+                if (!visibleTo(player.getRealName())) {
+                    return true;
+                }
+                // 按玩家自己的维度确认这一格还是空气：不是空气就不能拿 ghost 盖它
+                // （否则客户端显示假方块、服务端是真方块，走过去照样被弹）。
+                auto& source = player.getDimensionBlockSource();
+                if (!source.getBlock(::BlockPos{x, y, z}).isAir()) {
+                    return true;
+                }
                 for (auto const& packet : packets) {
                     if (sender.send(player, packet.packetId, packet.body)) {
                         ++sent;
@@ -499,8 +761,72 @@ void ProjectionSession::repaintOne(std::int32_t x, std::int32_t y, std::int32_t 
             });
             ++mStats.repaints;
         },
-        std::chrono::milliseconds(150)
+        std::chrono::milliseconds(kRepaintDelayMs)
     );
+}
+
+// ───────────────────────── 共享 / 私有（可见性） ─────────────────────────
+
+void ProjectionSession::setOwner(std::string owner) { mOwner = std::move(owner); }
+
+bool ProjectionSession::privateMode() const {
+    if (mOwner.empty()) {
+        return false;
+    }
+    return !share::sharedFor(mOwner);
+}
+
+bool ProjectionSession::visibleTo(std::string const& playerName) const {
+    if (mOwner.empty()) {
+        return true; // 控制台建的会话没有主人，恒为共享
+    }
+    if (playerName == mOwner) {
+        return true;
+    }
+    return share::sharedFor(mOwner);
+}
+
+std::size_t ProjectionSession::revokeFrom(::Player& player) {
+    auto const name = player.getRealName();
+    mViewers.erase(name);
+    if (mShownIndices.empty()) {
+        return 0;
+    }
+
+    auto level = ::ll::service::getLevel();
+    if (!level) {
+        return 0;
+    }
+    auto dimension = level->getDimension(player.getDimensionId()).lock();
+    if (!dimension) {
+        return 0;
+    }
+    auto& source = dimension->getBlockSourceFromMainChunkSource();
+
+    // 收回的做法和 clear 一样：读世界的真实方块发回去，客户端就把假方块擦掉。
+    std::vector<HoloBlockChange> changes;
+    changes.reserve(mShownIndices.size());
+    for (auto const index : mShownIndices) {
+        auto const& entry = mBlocks[index];
+        auto const& block = source.getBlock(::BlockPos{entry.x, entry.y, entry.z});
+        changes.push_back(
+            {entry.x,
+             entry.y,
+             entry.z,
+             static_cast<std::uint32_t>(block.mNetworkId),
+             BatchEncoder::kUpdateFlags,
+             0,
+             0}
+        );
+    }
+
+    std::vector<EncodedPacket> packets;
+    auto const                 encoded = BatchEncoder::getInstance().encode(changes, packets);
+    auto&                      sender  = PacketSender::getInstance();
+    for (auto const& packet : packets) {
+        sender.send(player, packet.packetId, packet.body);
+    }
+    return encoded;
 }
 
 // ─────────────────────────── 显示层镜像 / 重发调度 ───────────────────────────
@@ -562,6 +888,9 @@ void ProjectionSession::sendCachedTo(::Player& player) {
     if (mShownPackets.empty()) {
         return;
     }
+    if (!visibleTo(player.getRealName())) {
+        return; // 私有会话：补发也轮不到旁人
+    }
     auto& sender = PacketSender::getInstance();
     for (auto const& packet : mShownPackets) {
         sender.send(player, packet.packetId, packet.body);
@@ -576,11 +905,22 @@ void ProjectionSession::sendCachedTo(::Player& player) {
     }
     mStats.sentPackets += mShownPackets.size();
     ++mStats.resyncs;
+
+    // 缓存的预编码包不带「哪些格已经被真方块填了」的信息，
+    // 所以发完必须把已填充格压回真方块，否则重登/传送/心跳之后又会出现叠加态。
+    afterGhostPush(player);
 }
 
 void ProjectionSession::refreshWireframe() {
     auto& wireframe = Wireframe::getInstance();
     if (!mActive || !wireframe.enabled()) {
+        wireframe.hide(mId);
+        return;
+    }
+
+    // 私有会话不画包围盒线框：hologramlib 的 DebugShape 是全局形状、没有按玩家隔离的接口，
+    // 画出来等于把「投影在哪」直接告诉所有人。
+    if (privateMode()) {
         wireframe.hide(mId);
         return;
     }
@@ -676,6 +1016,18 @@ std::size_t ProjectionSession::rotate(::CommandOutput& output, ::Player* player)
         mIndex.emplace(packKey(mBlocks[i].x, mBlocks[i].y, mBlocks[i].z), i);
     }
 
+    // 子区块索引重建（坐标变了）。
+    mSubchunkCells.clear();
+    for (std::uint32_t i = 0; i < mBlocks.size(); ++i) {
+        auto const& e = mBlocks[i];
+        mSubchunkCells[packKey(e.x >> 4, e.y >> 4, e.z >> 4)].push_back(i);
+    }
+
+    // 世界里的真方块不会跟着投影转，已填充记录全部作废，ghost 重新接管所有格。
+    mFilledCells.clear();
+    mFilledSubchunks.clear();
+    mBrokenAt.clear();
+
     // 坐标全变了，旧镜像失效。
     mViewers.clear();
 
@@ -718,6 +1070,27 @@ std::size_t ProjectionSession::rotate(::CommandOutput& output, ::Player* player)
     return prepareLayers(output, from, to);
 }
 
+
+core::report::MaterialReport ProjectionSession::materials() const {
+    // 只喂「每格的调色板下标」，聚合逻辑在 core/report 里（纯数据、可离线回归）。
+    std::vector<std::uint32_t> paletteIds;
+    paletteIds.reserve(mBlocks.size());
+    for (auto const& entry : mBlocks) {
+        paletteIds.push_back(entry.paletteId);
+    }
+
+    // 可放置性是会话加载时解析好的（`mPaletteBlocks`）：不做这一步的话，
+    // 清单里会混进「映射失败、根本放不出来」的方块，玩家按清单备料会被误导。
+    std::vector<bool> placeable;
+    if (!mPaletteBlocks.empty()) {
+        placeable.reserve(mPaletteBlocks.size());
+        for (auto const* block : mPaletteBlocks) {
+            placeable.push_back(block != nullptr);
+        }
+    }
+
+    return core::report::countMaterials(mPalette, paletteIds, placeable.empty() ? nullptr : &placeable);
+}
 
 std::uint32_t ProjectionSession::internPalette(std::string const& stateText) {
     if (auto const it = mPaletteIds.find(stateText); it != mPaletteIds.end()) {

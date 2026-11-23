@@ -1,13 +1,21 @@
 #include "LitematicaBE/LitematicaBE.h"
 
 #include "LitematicaBE/Version.h"
+#include "LitematicaBE/core/place/PlaceConfig.h"
+#include "LitematicaBE/core/save/SaveConfig.h"
+#include "LitematicaBE/core/save/SaveService.h"
 #include "LitematicaBE/core/util/TextEncoding.h"
 #include "LitematicaBE/command/LitCommand.h"
+#include "LitematicaBE/easyplace/EasyPlace.h"
 #include "LitematicaBE/hologram/HologramFacade.h"
+#include "LitematicaBE/mapping/BedrockToJava.h"
 #include "LitematicaBE/mapping/GhostMap.h"
+#include "LitematicaBE/printer/Printer.h"
+#include "LitematicaBE/selection/SwordTool.h"
 #include "LitematicaBE/ghost/DispatchQueue.h"
 #include "LitematicaBE/ghost/BlockHook.h"
 #include "LitematicaBE/ghost/ProjectionManager.h"
+#include "LitematicaBE/ghost/ShareSwitch.h"
 #include "LitematicaBE/web/UploadServer.h"
 
 #include "ll/api/mod/RegisterHelper.h"
@@ -85,8 +93,21 @@ bool LitematicaBE::enable() {
         );
     }
 
+    // `/lit place` 的使用门槛（config/place.json）：默认要求创造模式、不要求管理员。
+    // 读失败照默认值跑，不影响启动。
+    {
+        std::string placeError;
+        if (!core::place::loadOptions(placeError)) {
+            logger.warn("place config NOT loaded ({}): /lit place uses defaults (creative only)", placeError);
+        }
+    }
+
+    // 「投影是否共享」的玩家级开关：默认全体共享，config/share.json 只记「私有」名单。
+    // 读失败不影响启动 —— 按默认（全体共享）继续跑。
+    ghost::share::load();
+
     command::registerLitCommand();
-    logger.info("command /lit registered (probe / send / batch / info / load)");
+    logger.info("command /lit registered (probe / info / load / layer / share / sel / save / saveat)");
 
     // 映射表是投影加载的前提；启动时就加载，失败原因能在日志里直接看到。
     auto& ghostMap = mapping::GhostMap::getInstance();
@@ -104,8 +125,7 @@ bool LitematicaBE::enable() {
         logger.info("upload page disabled: {}", upload.lastError());
     }
 
-    // 按 tick 预算发包的队列：LevelTickEvent 在服务端并不发布（注册就会抛异常，
-    // 而且会让后面的初始化整段跳过），load/clear 已经改成同步发送，这里不再启动。
+    // 按 tick 预算发包的队列：LevelTickEvent 在服务端并不发布（注册就会抛异常，而且会让后面的初始化整段跳过），load/clear 已经改成同步发送，这里不再启动。
     // 需要限速时再换成不依赖 tick 的驱动方式。
 
     // 方块变化监听：玩家把投影格挖掉后，把 ghost 补回去。
@@ -118,10 +138,59 @@ bool LitematicaBE::enable() {
     } catch (...) {
         logger.error("projection manager listeners FAILED: unknown exception");
     }
+
+    // 轻松放置：挂 Player::useItem（拿玩家上下文）+ 给 $setBlock 装前置过滤。
+    // 装不上不影响其它功能，只是 /lit easyplace 会报错。
+    if (easyplace::install()) {
+        logger.info(
+            "easyplace armed (hooks: Item::useOn + Player::useItem; filter: BlockSource::$setBlock; per-player /lit "
+            "easyplace)"
+        );
+    } else {
+        logger.error("easyplace hook FAILED to install");
+    }
+
+    // 投影打印机：不挂 hook，只起一条按 config/printer.json 节拍的定时器；
+    // 没人 /lit printer 时整轮空转（一次判断即返回）。
+    if (printer::install()) {
+        logger.info("printer armed (config/printer.json; per-player /lit printer)");
+    } else {
+        logger.error("printer FAILED to initialise");
+    }
+
+    // 投影保存（/lit save）：配置 + 基岩→Java 反查表 + 木剑选点。
+    {
+        std::string saveError;
+        if (!core::save::loadOptions(saveError)) {
+            logger.warn("save config NOT loaded ({}): /lit save uses defaults (mcstructure)", saveError);
+        }
+
+        auto& bedrockToJava = mapping::BedrockToJava::getInstance();
+        if (bedrockToJava.loadFromModDir()) {
+            auto const table = bedrockToJava.table();
+            logger.info("export map loaded: {} names / {} state maps", table.names, table.stateMaps);
+        } else {
+            logger.warn("export map NOT loaded ({}): .litematic export relies on builtin rules", bedrockToJava.lastError());
+        }
+
+        if (selection::install()) {
+            logger.info("selection armed (wooden sword: right-click block x2; sneak + right-click clears)");
+        } else {
+            logger.error("selection FAILED to install (easyplace useOn hook missing)");
+        }
+
+        // 无人值守自检（环境变量 LITEMATICABE_SELF_TEST）：没有客户端时的唯一验证通道。
+        if (core::save::runSelfTestFromEnv()) {
+            logger.info("self-test scheduled from LITEMATICABE_SELF_TEST (runs ~10s after enable)");
+        }
+    }
     return true;
 }
 
 bool LitematicaBE::disable() {
+    // 选区线框是全局形状，先收回再停投影管理器（顺序反了会把线留在客户端）。
+    selection::uninstall();
+    printer::uninstall();
     try {
         ghost::ProjectionManager::getInstance().stop();
     } catch (...) {

@@ -196,9 +196,10 @@ Write-Host ''
 Write-Host 'Next steps' -ForegroundColor Cyan
 Write-Host '  1. Start the server. Expect in the log:'
 Write-Host '       [LitematicaBE] LitematicaBE enabled, display path batch-encoder: HologramLib: batch encoder ready'
-Write-Host '       [LitematicaBE] command /lit registered (probe / send / batch)'
+Write-Host '       [LitematicaBE] command /lit registered (probe / info / load / layer / share)'
 Write-Host '  2. In game: /lit probe   -> 4 samples resolve, packetId != 0'
-Write-Host '  3. In game: /lit send    -> one stone 2 blocks above your feet, world unchanged'
-Write-Host '  4. In game: /lit batch   -> 5x5 stone/glass plane'
+Write-Host '  3. In game: /lit load <file>  -> the projection shows up at your feet (world unchanged)'
+Write-Host '  4. In game: /lit share off    -> only you can see the projection you placed'
+Write-Host '  5. In game: /lit place        -> really writes the projection into the world (config/place.json gate)'
 Write-Host ''
 Write-Host 'Checklist: docs/stage-a-acceptance.md' -ForegroundColor DarkGray

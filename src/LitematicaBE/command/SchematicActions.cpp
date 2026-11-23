@@ -7,6 +7,8 @@
 
 #include "LitematicaBE/core/schematic/LitematicFile.h"
 #include "LitematicaBE/core/schematic/McstructureFile.h"
+#include "LitematicaBE/core/place/PlaceConfig.h"
+#include "LitematicaBE/core/save/SaveConfig.h"
 #include "LitematicaBE/core/util/TextEncoding.h"
 #include "LitematicaBE/ghost/BatchEncoder.h"
 #include "LitematicaBE/ghost/DispatchQueue.h"
@@ -15,6 +17,7 @@
 #include "LitematicaBE/ghost/SurfaceCull.h"
 #include "LitematicaBE/mapping/BlockStateResolve.h"
 #include "LitematicaBE/mapping/GhostMap.h"
+#include "LitematicaBE/printer/Printer.h"
 
 #include "ll/api/mod/Mod.h"
 #include "ll/api/mod/NativeMod.h"
@@ -368,7 +371,9 @@ void loadProjection(::CommandOutput& output, ::Player& player, std::string const
         return;
     }
 
-    auto* session = ghost::ProjectionManager::getInstance().create(output, path, pos.x, pos.y, pos.z);
+    // owner = 执行者：可见性按他的 /lit share 开关决定（默认共享）。
+    auto* session =
+        ghost::ProjectionManager::getInstance().create(output, path, pos.x, pos.y, pos.z, player.getRealName());
     if (session == nullptr) {
         return;
     }
@@ -478,6 +483,10 @@ void resendAll(::CommandOutput& output) {
 
     std::size_t players = 0;
     level->forEachPlayer([&](::Player& player) {
+        // 私有会话：旁人不算「重发对象」。
+        if (!session->visibleTo(player.getRealName())) {
+            return true;
+        }
         session->sendCachedTo(player);
         ++players;
         return true;
@@ -488,33 +497,35 @@ void resendAll(::CommandOutput& output) {
         return;
     }
     output.success(
-        "已向 {} 名玩家重发当前层：{} 格 / {} 包",
+        "已向 {} 名玩家重发当前层：{} 格 / {} 包{}",
         players,
         mirror.blocksPerViewer,
-        mirror.cachedPackets
+        mirror.cachedPackets,
+        session->privateMode() ? "（私有：只有主人收到）" : ""
     );
 }
-void placeProjection(::CommandOutput& output, ::Player* player, int from, int to, bool overwrite) {
+void placeProjection(::CommandOutput& output, ::Player* player, int from, int to) {
     auto* session = ghost::ProjectionManager::getInstance().active();
     if (session == nullptr) {
         output.error("没有活动会话：先 /lit load <file> [x y z]");
         return;
     }
-    ghost::ProjectionSession::PlaceOptions options;
-    options.overwrite = overwrite;
-    session->place(output, player, from, to, options);
-}
 
-void planProjection(::CommandOutput& output, int from, int to) {
-    auto* session = ghost::ProjectionManager::getInstance().active();
-    if (session == nullptr) {
-        output.error("没有活动会话：先 /lit load <file> [x y z]");
-        return;
+    // 使用门槛（config/place.json）：默认要求创造模式、不要求管理员。
+    // 控制台没有玩家对象，不受这两条限制。
+    if (player != nullptr) {
+        std::string reason;
+        if (!core::place::checkAccess(*player, reason)) {
+            output.error("§c/lit place 被拒绝§r：{}", reason);
+            return;
+        }
     }
+
+    // `/lit place` 就是「覆盖式直接放置」（旧 /lit replace 的语义）：
+    // 目标位置已有非空气方块也照样写。
     ghost::ProjectionSession::PlaceOptions options;
-    options.dryRun    = true;
-    options.clearGhost = false;
-    session->place(output, nullptr, from, to, options);
+    options.overwrite = true;
+    session->place(output, player, from, to, options);
 }
 
 void listProjects(::CommandOutput& output) {
@@ -537,9 +548,32 @@ void reloadData(::CommandOutput& output) {
 
     if (!map.loadFromModDir()) {
         output.error("映射表重载失败：{}", map.lastError());
-        return;
+    } else {
+        output.success("映射表已重载：{} 个方块条目，状态解析缓存已清空", map.stats().blocks);
     }
-    output.success("映射表已重载：{} 个方块条目，状态解析缓存已清空", map.stats().blocks);
+
+    // 打印机配置与映射表一起热重载（改完 config/printer.json 不必重启）。
+    if (printer::reloadOptions()) {
+        output.success("打印机配置已重载（config/printer.json）");
+    } else {
+        output.error("打印机配置重载失败（沿用旧值，详情见服务器日志）");
+    }
+
+    // `/lit place` 的使用门槛同样热重载（config/place.json）。
+    std::string placeError;
+    if (core::place::reloadOptions(placeError)) {
+        output.success("直接放置门槛已重载（config/place.json）：{}", core::place::describe());
+    } else {
+        output.error("直接放置门槛重载失败（沿用旧值）：{}", util::sanitizeUtf8(placeError));
+    }
+
+    // 投影保存的配置（config/save.json）：默认格式、体积上限、门槛、覆盖策略。
+    std::string saveError;
+    if (core::save::reloadOptions(saveError)) {
+        output.success("保存配置已重载（config/save.json）：{}", core::save::describe());
+    } else {
+        output.error("保存配置重载失败（沿用旧值）：{}", util::sanitizeUtf8(saveError));
+    }
 }
 
 void listFiles(::CommandOutput& output) {

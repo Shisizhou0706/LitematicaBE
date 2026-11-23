@@ -8,8 +8,8 @@
     given console commands (default: "lit probe"), waits, then stops the server.
 
     Console commands run as the server console, so player-only subcommands
-    ("lit send" / "lit batch") will answer that they need a player - that is the
-    expected result here. Use them from inside the game.
+    ("lit share" / "lit easyplace" / "lit printer") will answer that they need
+    a player - that is the expected result here. Use them from inside the game.
 
     ASCII-only on purpose: Windows PowerShell 5.1 reads .ps1 without a BOM as ANSI.
 
@@ -145,7 +145,7 @@ Say ''
 Say '================ STAGE A REPORT ================' 'Cyan'
 
 $interesting = $lines | Where-Object {
-    $_ -match 'LitematicaBE|HologramLib|display path|command /lit|packetId|lit probe|lit send|lit batch|holo_core|====|>>>' `
+    $_ -match 'LitematicaBE|HologramLib|display path|command /lit|packetId|lit probe|lit info|lit load|holo_core|====|>>>' `
     -or $_ -match '[a-z_]+:[a-z_\[\]=,\.0-9"]+'
 }
 

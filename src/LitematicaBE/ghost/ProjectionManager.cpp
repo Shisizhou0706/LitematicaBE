@@ -43,10 +43,12 @@ ProjectionSession* ProjectionManager::create(
     std::filesystem::path const& file,
     int                          baseX,
     int                          baseY,
-    int                          baseZ
+    int                          baseZ,
+    std::string const&           owner
 ) {
     auto const id = mNextId++;
     auto session  = std::make_unique<ProjectionSession>(id, nextLabel(util::toUtf8(file.filename())));
+    session->setOwner(owner);
 
     if (!session->begin(output, file, baseX, baseY, baseZ)) {
         return nullptr;
@@ -111,6 +113,61 @@ bool ProjectionManager::remove(::CommandOutput& output, std::uint32_t id, ::Play
     return true;
 }
 
+void ProjectionManager::applyShareChange(::Player& player, bool shared) {
+    auto level = ::ll::service::getLevel();
+    if (!level) {
+        return;
+    }
+
+    auto const owner = player.getRealName();
+    for (auto& [id, session] : mSessions) {
+        (void)id;
+        if (session->owner() != owner) {
+            continue; // 只动自己放置的投影，别人的可见性跟他自己的开关走
+        }
+
+        if (shared) {
+            // 私有 → 共享：把当前显示层补发给所有在线玩家（sendCachedTo 自带可见性判定）。
+            level->forEachPlayer([&](::Player& p) {
+                session->sendCachedTo(p);
+                return true;
+            });
+        } else {
+            // 共享 → 私有：把旁人屏幕上已经出现的 ghost 擦掉。
+            // 先丢队列：不然排队中的 ghost 包会在收回之后才到，投影又「冒」出来。
+            level->forEachPlayer([&](::Player& p) {
+                if (p.getRealName() == owner) {
+                    return true;
+                }
+                DispatchQueue::getInstance().dropPlayer(p.getRealName());
+                session->revokeFrom(p);
+                // 队列按玩家归组、分不清是哪个会话的包，刚把他整组丢了：
+                // 把其它「他仍然看得到」的会话补发一遍，免得收回操作顺手把他别的投影也抹了。
+                for (auto& [otherId, other] : mSessions) {
+                    (void)otherId;
+                    if (other.get() == session.get()) {
+                        continue;
+                    }
+                    other->sendCachedTo(p);
+                }
+                return true;
+            });
+        }
+
+        // 线框是全局形状：私有会话收起，共享会话按需重画。
+        session->refreshWireframe();
+    }
+
+    if (auto mod = ::ll::mod::NativeMod::current()) {
+        mod->getLogger().info(
+            "share switch applied: owner='{}' shared={} sessions={}",
+            owner,
+            shared,
+            mSessions.size()
+        );
+    }
+}
+
 void ProjectionManager::list(::CommandOutput& output) const {
     if (mSessions.empty()) {
         output.success("当前没有投影会话（/lit load <file> [x y z] 新建）");
@@ -130,7 +187,7 @@ void ProjectionManager::list(::CommandOutput& output) const {
         }
 
         output.success(
-            "{}#{} {}｜{} 格｜层 {}~{}｜旋转 {}°｜{}｜重发 {} 次",
+            "{}#{} {}｜{} 格｜层 {}~{}｜旋转 {}°｜{}｜{}｜重发 {} 次",
             id == mActiveId ? "§a→ §r" : "  ",
             id,
             session->label(),
@@ -139,10 +196,11 @@ void ProjectionManager::list(::CommandOutput& output) const {
             session->bounds().to,
             session->rotation(),
             shownText,
+            session->privateMode() ? "私有（仅主人可见）" : "共享",
             stats.resyncs
         );
     }
-    output.success("§7/lit select <id> 切换；/lit remove <id> 收回并删除§r");
+    output.success("§7/lit select <id> 切换；/lit remove <id> 收回并删除；/lit share [on|off] 改可见性§r");
 }
 
 void ProjectionManager::requestRepaintAt(std::int32_t x, std::int32_t y, std::int32_t z) {
@@ -158,8 +216,77 @@ void ProjectionManager::requestRepaintAt(std::int32_t x, std::int32_t y, std::in
     }
 }
 
-void ProjectionManager::sendCachedTo(::Player& player) {
+bool ProjectionManager::targetBlockAt(std::int32_t x, std::int32_t y, std::int32_t z, ::Block const*& out) const {
+    out               = nullptr;
+    bool inProjection = false;
+    for (auto const& [id, session] : mSessions) {
+        (void)id;
+        if (!session->active()) {
+            continue;
+        }
+        ::Block const* cell = nullptr;
+        if (!session->targetCell(x, y, z, cell)) {
+            continue;
+        }
+        inProjection = true;
+        if (cell != nullptr) {
+            out = cell;
+            return true;
+        }
+    }
+    return inProjection;
+}
+
+void ProjectionManager::onCellFilled(std::int32_t x, std::int32_t y, std::int32_t z, ::Player& player) {
+    bool touched = false;
     for (auto& [id, session] : mSessions) {
+        (void)id;
+        if (!session->active() || !session->contains(x, y, z)) {
+            continue;
+        }
+        session->markFilled(x, y, z);
+        touched = true;
+    }
+    if (!touched) {
+        return;
+    }
+
+    auto const playerName = player.getRealName();
+    // 不能立刻发：引擎自己的方块更新还在路上，先发会被它盖掉。
+    ::ll::thread::ServerThreadExecutor::getDefault().executeAfter(
+        [this, x, y, z, playerName]() {
+            auto level = ::ll::service::getLevel();
+            if (!level) {
+                return;
+            }
+            level->forEachPlayer([&](::Player& p) {
+                if (p.getRealName() != playerName) {
+                    return true;
+                }
+                for (auto& [id, session] : mSessions) {
+                    (void)id;
+                    if (!session->active()) {
+                        continue;
+                    }
+                    session->afterGhostPush(p);
+                }
+                return false;
+            });
+        },
+        std::chrono::milliseconds(60)
+    );
+}
+
+std::size_t ProjectionManager::filledCellCount() const {
+    std::size_t total = 0;
+    for (auto const& [id, session] : mSessions) {
+        (void)id;
+        total += session->filledCount();
+    }
+    return total;
+}
+
+void ProjectionManager::sendCachedTo(::Player& player) {    for (auto& [id, session] : mSessions) {
         (void)id;
         session->sendCachedTo(player);
         ++mResyncs;

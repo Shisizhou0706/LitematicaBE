@@ -9,17 +9,8 @@
 
 namespace litematicabe::web {
 
-/// 内置的投影上传服务（HTTP/1.1，最小实现）。
-///
-/// 目的只有一件事：不碰服务器文件系统也能把 `.litematic` 放进 `plugins/LitematicaBE/schematics/`。
-/// 上传成功后**不会自动加载**，玩家需要执行 `/lit load <file>`（避免误把大建筑铺到世界里）。
-///
-/// 配置：`<模组目录>/config/upload.json`
-/// ```json
-/// { "enabled": true, "bind": "127.0.0.1", "port": 8686, "token": "", "maxSizeMb": 64 }
-/// ```
-/// `token` 为空时启动会随机生成并写回文件（日志里也会打印）。
-/// 默认只监听 `127.0.0.1`：要远程上传请自己改 `bind` 并确认防火墙/端口转发，token 是唯一的鉴权。
+/// 内置的投影上传服务。
+
 class UploadServer {
 public:
     static UploadServer& getInstance();

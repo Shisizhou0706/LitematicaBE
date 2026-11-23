@@ -47,6 +47,12 @@ class Tag {
 public:
     TagType type{TagType::End};
 
+    /// List 的元素类型。
+    ///
+    /// NBT 的 List 在字节流里一定带元素类型（空列表也带），读的时候不保留就没法原样写回。
+    /// 读取端顺便填上，写入端（`NbtWriter`）按它落字节。
+    TagType listType{TagType::End};
+
     std::int64_t               intValue{};
     double                     doubleValue{};
     std::string                stringValue;

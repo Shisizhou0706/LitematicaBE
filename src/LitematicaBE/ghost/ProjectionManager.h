@@ -12,6 +12,7 @@
 
 class CommandOutput;
 class Player;
+class Block;
 
 namespace litematicabe::ghost {
 
@@ -28,13 +29,22 @@ public:
     static ProjectionManager& getInstance();
 
     /// 新建会话（解析 + 剔除 + 选中），失败返回 nullptr（原因写入 output）。
+    ///
+    /// @param owner `/lit load` 的玩家名；空 = 控制台创建（没有主人，恒为共享）。
     ProjectionSession* create(
         ::CommandOutput&              output,
         std::filesystem::path const&  file,
         int                           baseX,
         int                           baseY,
-        int                           baseZ
+        int                           baseZ,
+        std::string const&            owner = {}
     );
+
+    /// `/lit share` 切换可见性之后调用：把属于该玩家的会话按新状态重发 / 收回。
+    ///
+    /// 私有 → 共享：把当前显示层补发给所有在线玩家；
+    /// 共享 → 私有：给旁人发一遍真实方块擦掉 ghost，并丢掉他们排队中的 ghost 包。
+    void applyShareChange(::Player& player, bool shared);
 
     [[nodiscard]] ProjectionSession* active();
     [[nodiscard]] ProjectionSession* find(std::uint32_t id);
@@ -45,6 +55,23 @@ public:
 
     /// 方块变化分发：哪份投影包含该坐标就由谁补格（可能同时命中多份）。
     void requestRepaintAt(std::int32_t x, std::int32_t y, std::int32_t z);
+
+    /// 轻松放置：跨会话查「这格投影要求什么方块」。
+    ///
+    /// @param out 命中的目标方块；nullptr 表示格子在投影里但解析不出可放置方块。
+    /// @return false = 没有任何会话包含该坐标（绝大多数放置走这条，O(会话数) 的 AABB 拒绝）。
+    [[nodiscard]] bool targetBlockAt(std::int32_t x, std::int32_t y, std::int32_t z, ::Block const*& out) const;
+
+    /// 玩家在投影格上放下了真方块。
+    ///
+    /// 处理两件事：
+    ///   1. 所有包含该格的会话把该格记成「已填充」，之后的 ghost 发包都跳过它；
+    ///   2. 下一 tick 给该玩家补两包——把该格压回真方块（消掉 ghost/真方块叠加态），
+    ///      再重发该子区块的邻居 ghost（修掉被引擎更新顺手吞掉的邻居）。
+    void onCellFilled(std::int32_t x, std::int32_t y, std::int32_t z, ::Player& player);
+
+    /// 所有会话里「已被真方块填上」的格数（诊断用）。
+    [[nodiscard]] std::size_t filledCellCount() const;
 
     /// 玩家状态变化（进服/重生/传送/换维度）时，对所有会话补发当前显示层。
     void sendCachedTo(::Player& player);
