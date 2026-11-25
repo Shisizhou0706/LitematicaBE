@@ -9,17 +9,17 @@
 
 namespace litematicabe::mapping {
 
-/// 一条状态：`("minecraft:cardinal_direction", "north")`。
+// 一条状态：`("minecraft:cardinal_direction", "north")`。
 using StatePair  = std::pair<std::string, std::string>;
 using StatePairs = std::vector<StatePair>;
 
-/// 状态串的一段：`a:b[c=d,e=f]` → `a:b`。
+// 状态串的一段：`a:b[c=d,e=f]` → `a:b`。
 [[nodiscard]] inline std::string_view stateNameOf(std::string_view stateText) noexcept {
     auto const open = stateText.find('[');
     return open == std::string_view::npos ? stateText : stateText.substr(0, open);
 }
 
-/// 状态串里的 `c=d,e=f` 部分；没有 `[` 时返回空串。
+// 状态串里的 `c=d,e=f` 部分；没有 `[` 时返回空串。
 [[nodiscard]] inline std::string_view stateBodyOf(std::string_view stateText) noexcept {
     auto const open = stateText.find('[');
     if (open == std::string_view::npos) {
@@ -50,7 +50,7 @@ inline std::string unquoteText(std::string s) {
     return s;
 }
 
-/// 把 `c=d,e=f` 拆成文本对（保留原始字面值，不做类型推断）。引号内的逗号不切分。
+// 把 `c=d,e=f` 拆成文本对（保留原始字面值，不做类型推断）。引号内的逗号不切分。
 inline StatePairs parseStatePairs(std::string_view body) {
     StatePairs parts;
     std::string current;
@@ -99,7 +99,7 @@ inline StatePairs parseStatePairs(std::string_view body) {
     return out;
 }
 
-/// 文本对 → 注册表要的类型（按 bool → int → float → string 顺序推断，与库同口径）。
+// 文本对 → 注册表要的类型（按 bool → int → float → string 顺序推断，与库同口径）。
 inline ::Block::BlockStatesType toBlockStates(StatePairs const& pairs) {
     ::Block::BlockStatesType states;
     states.reserve(pairs.size());
@@ -124,7 +124,7 @@ inline ::Block::BlockStatesType toBlockStates(StatePairs const& pairs) {
     return states;
 }
 
-/// `name[state]`；states 为空时只返回名字。
+// `name[state]`；states 为空时只返回名字。
 inline std::string buildStateText(std::string_view name, StatePairs const& states) {
     if (states.empty()) {
         return std::string{name};

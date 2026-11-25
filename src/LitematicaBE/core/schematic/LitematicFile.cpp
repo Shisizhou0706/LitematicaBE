@@ -39,7 +39,7 @@ std::string tagString(Tag const* tag) {
     return {};
 }
 
-/// 属性值统一字符串化（Java NBT 里可能是 byte/short/int/string）。
+// 属性值统一字符串化（Java NBT 里可能是 byte/short/int/string）。
 std::string propertyValue(Tag const* tag) {
     if (tag == nullptr) {
         return {};

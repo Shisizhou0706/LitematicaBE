@@ -13,6 +13,7 @@
 #include "LitematicaBE/ghost/BatchEncoder.h"
 #include "LitematicaBE/ghost/DispatchQueue.h"
 #include "LitematicaBE/ghost/ProjectionManager.h"
+#include "LitematicaBE/ghost/ProjectionLimits.h"
 #include "LitematicaBE/ghost/PacketSender.h"
 #include "LitematicaBE/ghost/SurfaceCull.h"
 #include "LitematicaBE/mapping/BlockStateResolve.h"
@@ -69,7 +70,7 @@ std::string stripSchemeExt(std::string name) {
     return name;
 }
 
-/// 控制台会把 GBK 字节当 Latin-1 再编码成 UTF-8（双跳）；这里把 U+0080..U+00FF 还原成单字节。
+// 控制台会把 GBK 字节当 Latin-1 再编码成 UTF-8（双跳）；这里把 U+0080..U+00FF 还原成单字节。
 std::string restoreLatin1(std::string const& raw) {
     std::string out;
     out.reserve(raw.size());
@@ -94,8 +95,8 @@ std::string restoreLatin1(std::string const& raw) {
     return out;
 }
 
-/// 命令参数的编码没法可靠判断：游戏内是 UTF-8，控制台可能是 GBK，GBK 字节还可能被双跳。
-/// 这里把几种解释都给出，让调用方逐个试。
+// 命令参数的编码没法可靠判断：游戏内是 UTF-8，控制台可能是 GBK，GBK 字节还可能被双跳。
+// 这里把几种解释都给出，让调用方逐个试。
 std::vector<std::filesystem::path> interpretationsOf(std::string const& raw) {
     std::vector<std::filesystem::path> out;
     auto push = [&out](std::filesystem::path candidate) {
@@ -123,7 +124,7 @@ std::vector<std::filesystem::path> interpretationsOf(std::string const& raw) {
     return out;
 }
 
-/// 目录扫描兜底：解决编码差异、大小写、少写扩展名。
+// 目录扫描兜底：解决编码差异、大小写、少写扩展名。
 std::filesystem::path scanForFile(std::filesystem::path const& dir, std::string const& raw) {
     std::error_code ec;
     if (!std::filesystem::is_directory(dir, ec)) {
@@ -565,6 +566,14 @@ void reloadData(::CommandOutput& output) {
         output.success("直接放置门槛已重载（config/place.json）：{}", core::place::describe());
     } else {
         output.error("直接放置门槛重载失败（沿用旧值）：{}", util::sanitizeUtf8(placeError));
+    }
+
+    // 投影的两处方块数上限（config/projection.json）：加载收集上限 + 单次放置上限。
+    std::string limitsError;
+    if (ghost::limits::reloadOptions(limitsError)) {
+        output.success("投影上限已重载（config/projection.json）：{}", ghost::limits::describe());
+    } else {
+        output.error("投影上限重载失败（沿用旧值）：{}", util::sanitizeUtf8(limitsError));
     }
 
     // 投影保存的配置（config/save.json）：默认格式、体积上限、门槛、覆盖策略。

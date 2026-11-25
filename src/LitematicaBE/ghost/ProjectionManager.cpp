@@ -70,6 +70,20 @@ ProjectionSession* ProjectionManager::find(std::uint32_t id) {
     return it == mSessions.end() ? nullptr : it->second.get();
 }
 
+void ProjectionManager::forEachSession(std::function<bool(ProjectionSession&)> const& fn) {
+    if (!fn) {
+        return;
+    }
+    // mSessions 是 std::map，天然按 id 升序。回调里允许 select/remove 之外的读操作；
+    // 删除会话请走 remove()，不要在回调里直接改容器。
+    for (auto& [id, session] : mSessions) {
+        (void)id;
+        if (session && !fn(*session)) {
+            return;
+        }
+    }
+}
+
 bool ProjectionManager::select(::CommandOutput& output, std::uint32_t id) {
     if (mSessions.find(id) == mSessions.end()) {
         output.error("没有 #{} 这份投影（用 /lit projects 查看）", id);

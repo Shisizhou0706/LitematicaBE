@@ -17,7 +17,7 @@ namespace {
 
 using litematicabe::hologram::ShapeDrawer;
 
-/// 与旧项目 `SelectionTool` 同值：右键连点的双触发不会把第二点记成第一点。
+// 与旧项目 `SelectionTool` 同值：右键连点的双触发不会把第二点记成第一点。
 constexpr std::int64_t kCooldownMs = 500;
 
 Box boxOf(Point const& a, Point const& b) {
@@ -147,16 +147,16 @@ namespace {
 
 constexpr std::size_t kLineCount = 12;
 
-/// 一个玩家当前的线框：盒体样式填 `boxId`，线条样式填 `lineIds`。
+// 一个玩家当前的线框：盒体样式填 `boxId`，线条样式填 `lineIds`。
 struct Shown {
     std::int64_t                 boxId{};
     std::array<std::int64_t, kLineCount> lineIds{};
 };
 
-/// 每个玩家一个框（形状是全局的，没法按玩家隔离）。
+// 每个玩家一个框（形状是全局的，没法按玩家隔离）。
 std::unordered_map<std::string, Shown> gShown;
 
-/// 收起一个形状。先 `exists` 再 `destroy`：重复销毁在部分库版本里会让整批形状失效。
+// 收起一个形状。先 `exists` 再 `destroy`：重复销毁在部分库版本里会让整批形状失效。
 void destroyShape(std::int64_t id) {
     if (id <= 0) {
         return;
@@ -181,7 +181,7 @@ struct Corner {
     float z;
 };
 
-/// 角点索引：bit0 = x(0/1)、bit1 = y(0/1)、bit2 = z(0/1)。
+// 角点索引：bit0 = x(0/1)、bit1 = y(0/1)、bit2 = z(0/1)。
 Corner cornerAt(float x1, float y1, float z1, float x2, float y2, float z2, unsigned index) {
     return Corner{
         (index & 1u) != 0 ? x2 : x1,
@@ -190,7 +190,7 @@ Corner cornerAt(float x1, float y1, float z1, float x2, float y2, float z2, unsi
     };
 }
 
-/// 12 条棱（角点对）：底面 4、顶面 4、竖棱 4。
+// 12 条棱（角点对）：底面 4、顶面 4、竖棱 4。
 constexpr unsigned kEdges[kLineCount][2] = {
     {0, 1},
     {1, 3},

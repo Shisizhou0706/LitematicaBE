@@ -29,7 +29,7 @@ std::string unquote(std::string s) {
     return s;
 }
 
-/// 把 `k=v,k2=v2` 拆成 BlockStatesType。与库的 parseBlockState 同口径。
+// 把 `k=v,k2=v2` 拆成 BlockStatesType。与库的 parseBlockState 同口径。
 bool parseStates(std::string_view body, ::Block::BlockStatesType& outStates) {
     std::vector<std::string> parts;
     std::string              current;

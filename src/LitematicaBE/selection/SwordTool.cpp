@@ -21,10 +21,10 @@ namespace litematicabe::selection {
 
 namespace {
 
-/// 选点工具的唯一触发物（旧项目同款）。
+// 选点工具的唯一触发物（旧项目同款）。
 constexpr char const* kSwordName = "minecraft:wooden_sword";
 
-/// 下线清理轮询间隔：玩家退服/掉线后选区与线框都该消失。
+// 下线清理轮询间隔：玩家退服/掉线后选区与线框都该消失。
 constexpr std::int64_t kPruneIntervalMs = 2000;
 
 bool gInstalled{};
@@ -159,6 +159,7 @@ bool onUseOn(::Player& player, ::ItemStack& item, ::BlockPos const& pos, unsigne
         );
         player.sendMessage(std::string{head} + "\n" + tail);
         player.sendMessage("§7/lit save stru <名字>§r 存 .mcstructure　§7/lit save lite <名字>§r 存 .litematic");
+        player.sendMessage("§7或 §f潜行 + 左键挥木剑§r 打开面板，在「选区与保存」里点两下存盘");
         player.sendMessage("§7/lit sel clear§r 清空选区");
         box::show(name, box);
         return true;

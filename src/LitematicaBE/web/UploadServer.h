@@ -9,16 +9,16 @@
 
 namespace litematicabe::web {
 
-/// 内置的投影上传服务。
+// 内置的投影上传服务。
 
 class UploadServer {
 public:
     static UploadServer& getInstance();
 
-    /// 读配置并启动；返回 false 表示未启用或启动失败（原因写在 lastError）。
+    // 读配置并启动；返回 false 表示未启用或启动失败（原因写在 lastError）。
     bool start();
 
-    /// 停止监听并回收线程。
+    // 停止监听并回收线程。
     void stop();
 
     [[nodiscard]] bool running() const noexcept { return mRunning.load(); }

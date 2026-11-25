@@ -21,7 +21,7 @@ namespace {
 namespace save      = litematicabe::core::save;
 namespace selection = litematicabe::selection;
 
-/// `/lit save` 的统一收尾提示。
+// `/lit save` 的统一收尾提示。
 void printHint(::CommandOutput& output, save::SaveResult const& result) {
     if (!result.files.empty()) {
         output.success("§7用 /lit info <文件名> 复核，/lit load <文件名> 铺投影§r");
@@ -32,7 +32,7 @@ void printHint(::CommandOutput& output, save::SaveResult const& result) {
 
 void showSelection(::CommandOutput& output, ::Player* player) {
     if (player == nullptr) {
-        output.error("选区是按玩家记录的：请在游戏内执行 /lit sel（控制台可用 /lit saveat）");
+        output.error("选区是按玩家记录的：请在游戏内执行 /lit sel（控制台可用 /lit saveat stru <名字> <坐标>）");
         return;
     }
     auto const name = player->getRealName();
@@ -62,7 +62,9 @@ void saveWithSelection(
     save::Format       format
 ) {
     if (player == nullptr) {
-        output.error("控制台执行请用 /lit saveat <名字> <x1> <y1> <z1> <x2> <y2> <z2>（选区是按玩家记录的）");
+        output.error(
+            "控制台执行请用 /lit saveat stru|lite|both <名字> <x1> <y1> <z1> <x2> <y2> <z2>（选区是按玩家记录的）"
+        );
         return;
     }
 

@@ -12,11 +12,11 @@ namespace {
 
 constexpr wchar_t kHologramLibModule[] = L"HologramLib.dll";
 
-/// x64 的 MSVC 名字修饰（clang-cl 使用同一套 MS ABI）。
+// x64 的 MSVC 名字修饰（clang-cl 使用同一套 MS ABI）。
 constexpr char kGetInstance[] = "?getInstance@IHologramLib@hologramlib@@SAAEAV12@XZ";
 
-/// ABI 戳是导出的 C 函数（`uint32_t __cdecl hologramlib_abiStamp()`），
-/// 不是变量——按变量解引用会读到函数机器码，永远判成 mismatch。
+// ABI 戳是导出的 C 函数（`uint32_t __cdecl hologramlib_abiStamp()`），
+// 不是变量——按变量解引用会读到函数机器码，永远判成 mismatch。
 constexpr char kAbiStamp[] = "hologramlib_abiStamp";
 
 } // namespace

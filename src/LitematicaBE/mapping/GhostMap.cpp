@@ -39,7 +39,7 @@ std::string const* findState(
     return nullptr;
 }
 
-/// 把 `lit:g_x[{a}][{b}]` 里的 `{state}` 换成 Java 状态值。
+// 把 `lit:g_x[{a}][{b}]` 里的 `{state}` 换成 Java 状态值。
 std::string expandTemplate(
     std::string const&                                     pattern,
     std::vector<std::pair<std::string, std::string>> const& states

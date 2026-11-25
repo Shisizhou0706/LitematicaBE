@@ -40,10 +40,10 @@ namespace {
 
 namespace place = litematicabe::core::place;
 
-/// 放置时的方块更新标志：0x1 通知邻居 + 0x2 同步到客户端（与 `/lit place` 同一组值）。
+// 放置时的方块更新标志：0x1 通知邻居 + 0x2 同步到客户端（与 `/lit place` 同一组值）。
 constexpr int kPlaceUpdateFlags = 3;
 
-/// 全部状态都在服务端主线程读写（定时器 / 命令回调同一线程），因此不加锁。
+// 全部状态都在服务端主线程读写（定时器 / 命令回调同一线程），因此不加锁。
 Options                                       gOptions{};
 bool                                          gInstalled{false};
 bool                                          gRunning{false};
@@ -56,7 +56,7 @@ std::int64_t nowMs() {
         .count();
 }
 
-/// 同一玩家同一类提示的最小间隔。
+// 同一玩家同一类提示的最小间隔。
 bool noticeAllowed(::Player& player, std::int64_t cooldownMs) {
     auto const now  = nowMs();
     auto&      last = gLastNoticeMs[player.getRealName()];
@@ -81,7 +81,7 @@ void notifyNoShownLayer(::Player& player) {
     player.sendMessage("§e[投影打印机] 先 /lit layer <from> [to] 选定要打印的层§r");
 }
 
-/// 玩家碰撞盒（0.6 × 1.8，脚在 pos.y）是否与该格相交。
+// 玩家碰撞盒（0.6 × 1.8，脚在 pos.y）是否与该格相交。
 bool overlapsPlayer(::Player& player, int x, int y, int z) {
     auto const  pos  = player.getPosition();
     float const minX = pos.x - 0.3f;
@@ -100,10 +100,10 @@ struct Candidate {
     int            y{};
     int            z{};
     float          dist2{};
-    ::Block const* target{}; ///< 该格投影要求的目标方块（注册表单例，整轮有效）
+    ::Block const* target{}; //< 该格投影要求的目标方块（注册表单例，整轮有效）
 };
 
-/// 逐格写入 + 回读校验；失败时补载一次区块再试。
+// 逐格写入 + 回读校验；失败时补载一次区块再试。
 bool writeCell(::BlockSource& source, ::BlockPos const& pos, ::Block const& target) {
     auto const written = [&]() {
         // 不能拿 mNetworkId 比对：方块类型级的值，同类型不同状态共用一个 id。

@@ -12,9 +12,12 @@
 #include "LitematicaBE/mapping/GhostMap.h"
 #include "LitematicaBE/printer/Printer.h"
 #include "LitematicaBE/selection/SwordTool.h"
+#include "LitematicaBE/ui/Menu.h"
+#include "LitematicaBE/ui/SwordTrigger.h"
 #include "LitematicaBE/ghost/DispatchQueue.h"
 #include "LitematicaBE/ghost/BlockHook.h"
 #include "LitematicaBE/ghost/ProjectionManager.h"
+#include "LitematicaBE/ghost/ProjectionLimits.h"
 #include "LitematicaBE/ghost/ShareSwitch.h"
 #include "LitematicaBE/web/UploadServer.h"
 
@@ -106,6 +109,19 @@ bool LitematicaBE::enable() {
     // 读失败不影响启动 —— 按默认（全体共享）继续跑。
     ghost::share::load();
 
+    // 投影的两处方块数上限（config/projection.json）：
+    // `maxLoadBlocks` 是 `/lit load` 的收集上限，`maxPlaceBlocks` 是 `/lit place` 的单次写入上限。
+    // 读失败照默认值跑（40 万 / 20 万），不影响启动。
+    {
+        std::string limitsError;
+        if (!ghost::limits::loadOptions(limitsError)) {
+            logger.warn(
+                "projection limits NOT loaded ({}): /lit load uses 400000, /lit place uses 200000",
+                limitsError
+            );
+        }
+    }
+
     command::registerLitCommand();
     logger.info("command /lit registered (probe / info / load / layer / share / sel / save / saveat)");
 
@@ -184,10 +200,21 @@ bool LitematicaBE::enable() {
             logger.info("self-test scheduled from LITEMATICABE_SELF_TEST (runs ~10s after enable)");
         }
     }
+
+    // 木剑面板：潜行 + 左键唤出，左键抬头/低头切层。
+    // 必须放在 selection::install() 之后 —— 两者共用同一把木剑，但吃的是不同手势
+    // （选区占右键，面板占左键），互不拦截。
+    if (ui::install()) {
+        logger.info("wooden sword menu armed (swing path: {})", ui::activePath());
+    } else {
+        logger.error("wooden sword menu FAILED to install (no event emitter and swing hook missing)");
+    }
     return true;
 }
 
 bool LitematicaBE::disable() {
+    // 面板先摘：它依赖会话/选区状态，反过来卸载会把过期指针留在表单回调里。
+    ui::uninstall();
     // 选区线框是全局形状，先收回再停投影管理器（顺序反了会把线留在客户端）。
     selection::uninstall();
     printer::uninstall();

@@ -20,20 +20,18 @@ namespace {
 std::atomic<std::uint64_t> gSetCalls{0};
 SetBlockFilter             gFilter = nullptr;
 
-/// 运行时捕获到的 BlockSource。
-///
-/// 背景：LL 1.9.9 在这个服务端上 `Level::getDimension()` 始终返回空 weak_ptr，
-/// `mRegions` / `mDimensions` 读出来也都是 0（结构布局与 BDS 实际不符），
-/// 于是「往世界里写方块」拿不到 BlockSource。改成运行时捕获，两个入口：
-///   * 区块创建（`LevelChunk::createNewNoCustomDeleter`）—— 参数直接带 `Dimension&`，
-///     世界加载时一定发生，无玩家也能命中；
-///   * `BlockSource::$getBlock` / `$setBlock` —— 世界开始活动后一定能命中。
+// 运行时捕获到的 BlockSource。
+//
+// 背景：LL 1.9.9 在这个服务端上 `Level::getDimension()` 始终返回空 weak_ptr，
+// `mRegions` / `mDimensions` 读出来也都是 0（结构布局与 BDS 实际不符），于是「往世界里写方块」拿不到 BlockSource。改成运行时捕获，两个入口：
+//   * 区块创建（`LevelChunk::createNewNoCustomDeleter`）—— 参数直接带 `Dimension&`，世界加载时一定发生，无玩家也能命中；
+//   * `BlockSource::$getBlock` / `$setBlock` —— 世界开始活动后一定能命中。
 ::BlockSource* gCapturedSource = nullptr;
 bool           gCaptureInstalled{false};
 
-/// BlockSource:: 有两个重载，先转成确定类型再交给 hook 宏。
+// BlockSource:: 有两个重载，先转成确定类型再交给 hook 宏。
 
-/// `BlockSource::$getBlock` 有两个重载，先转成确定类型再交给 hook 宏。
+// `BlockSource::$getBlock` 有两个重载，先转成确定类型再交给 hook 宏。
 using GetBlockPosFn = ::Block const& (::BlockSource::*)(::BlockPos const&) const;
 
 GetBlockPosFn const kGetBlockPos = static_cast<GetBlockPosFn>(&::BlockSource::$getBlock);
@@ -77,8 +75,7 @@ LL_TYPE_INSTANCE_HOOK(
         gCapturedSource = thisFor<::BlockSource>();
     }
 
-    // 轻松放置：在调 origin 之前决定「这一格到底写什么」。有替换时不写原方块，
-    // 所以客户端只会收到一次方块更新（写错再改会闪一帧）。
+    // 轻松放置：在调 origin 之前决定「这一格到底写什么」。有替换时不写原方块，所以客户端只会收到一次方块更新（写错再改会闪一帧）。
     if (auto const filter = gFilter; filter != nullptr && !block.isAir()) {
         ::Block const* replacement = nullptr;
         switch (filter(*thisFor<::BlockSource>(), pos, block, replacement)) {

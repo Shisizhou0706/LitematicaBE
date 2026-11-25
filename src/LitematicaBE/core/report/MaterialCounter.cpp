@@ -16,7 +16,7 @@ struct Label {
     std::string_view label;
 };
 
-/// 16 色（基岩 `color` / Java 名字里的 `light_gray` 都走这张表）。
+// 16 色（基岩 `color` / Java 名字里的 `light_gray` 都走这张表）。
 constexpr Label kColors[] = {
     {"white",      "白色"  },
     {"orange",     "橙色"  },
@@ -38,7 +38,7 @@ constexpr Label kColors[] = {
     {"black",      "黑色"  },
 };
 
-/// 木种（`.litematic` 里是 `oak_planks` 这种名字，基岩侧偶尔用 `wood_type=oak`）。
+// 木种（`.litematic` 里是 `oak_planks` 这种名字，基岩侧偶尔用 `wood_type=oak`）。
 constexpr Label kWoods[] = {
     {"oak",        "橡木"    },
     {"spruce",     "云杉木"  },
@@ -54,7 +54,7 @@ constexpr Label kWoods[] = {
     {"pale_oak",   "苍白橡木"},
 };
 
-/// 基岩 `stone_type` / `sand_type` / `dirt_type` 的取值。
+// 基岩 `stone_type` / `sand_type` / `dirt_type` 的取值。
 constexpr Label kStones[] = {
     {"stone",            "石头"      },
     {"granite",          "花岗岩"    },
@@ -108,7 +108,7 @@ std::string trim(std::string text) {
     return text.substr(begin, end - begin);
 }
 
-/// 状态值可能带引号（NBT 里字符串状态会写成 `"value"`）。
+// 状态值可能带引号（NBT 里字符串状态会写成 `"value"`）。
 std::string unquote(std::string value) {
     if (value.size() >= 2 && (value.front() == '"' || value.front() == '\'') && value.back() == value.front()) {
         value = value.substr(1, value.size() - 2);
@@ -147,7 +147,7 @@ std::string materialVariantLabel(std::string const& key, std::string const& valu
     if (!label.empty()) {
         return std::string{label};
     }
-    // 认不出的取值照原样给出来：宁可显示英文，也不要悄悄丢掉「这两种材料其实不一样」。
+    // 认不出的取值照原样给出来：宁可显示英文也不丢弃。
     return unquote(value);
 }
 

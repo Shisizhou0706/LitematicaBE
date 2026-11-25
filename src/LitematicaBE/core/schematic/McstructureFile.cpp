@@ -25,7 +25,7 @@ std::string stripNamespace(std::string const& key) {
     return key;
 }
 
-/// 状态值统一字符串化（基岩侧可能是 byte/int/string/float）。
+// 状态值统一字符串化（基岩侧可能是 byte/int/string/float）。
 std::string valueToString(Tag const* tag) {
     if (tag == nullptr) {
         return {};
@@ -49,7 +49,7 @@ std::string valueToString(Tag const* tag) {
     }
 }
 
-/// 名字归一化：Bedrock 的 "flowing_water" 在映射表里是 "water"。
+// 名字归一化：Bedrock 的 "flowing_water" 在映射表里是 "water"。
 std::string normaliseName(std::string const& name) {
     if (name == "minecraft:flowing_water") {
         return "minecraft:water";
@@ -60,7 +60,7 @@ std::string normaliseName(std::string const& name) {
     return name;
 }
 
-/// 读 Int 列表（TAG_List<Int> 或 TAG_IntArray 都认）。
+// 读 Int 列表（TAG_List<Int> 或 TAG_IntArray 都认）。
 std::vector<std::int32_t> readIntList(Tag const* tag) {
     std::vector<std::int32_t> out;
     if (tag == nullptr) {
@@ -82,7 +82,7 @@ std::vector<std::int32_t> readIntList(Tag const* tag) {
     return out;
 }
 
-/// palette 有两种形态：新版 `{default: {...}}`，旧版 `[{...}]`。
+// palette 有两种形态：新版 `{default: {...}}`，旧版 `[{...}]`。
 Tag const* paletteBody(Tag const* palette) {
     if (palette == nullptr) {
         return nullptr;
@@ -166,8 +166,7 @@ ReadError readMcstructure(std::filesystem::path const& file, McstructureFile& ou
             entry.states.reserve(states->compound.size());
             for (auto const& [key, value] : states->compound) {
                 // 键保留原样：Bedrock 结构文件里状态键混用两套命名空间
-            // （minecraft:cardinal_direction 与裸 upside_down_bit 并存），
-            // strip 掉会让放置时无法还原成注册表认的那一个。
+            // （minecraft:cardinal_direction 与裸 upside_down_bit 并存），strip 掉会让放置时无法还原成注册表认的那一个。
             entry.states.emplace_back(key, valueToString(value.get()));
             }
             std::sort(

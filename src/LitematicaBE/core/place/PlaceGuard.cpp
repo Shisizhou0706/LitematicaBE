@@ -31,7 +31,7 @@ bool nameHas(std::string_view haystack, std::string_view needle) {
     return haystack.find(needle) != std::string_view::npos;
 }
 
-/// `BlockType` 是注册表单例，生命周期等于进程 —— 指针做键即可。
+// `BlockType` 是注册表单例，生命周期等于进程 —— 指针做键即可。
 std::unordered_map<::BlockType const*, RiskBits> gRiskCache;
 
 RiskBits computeRisk(::BlockType const& type) {
@@ -62,10 +62,8 @@ RiskBits computeRisk(::BlockType const& type) {
     return bits;
 }
 
-/// 「顶掉不心疼」的类型表：投影打印机在 `onlyAir=false` 时允许覆盖这些方块。
-///
-/// 刻意不收藤蔓 / 睡莲 / 甘蔗 / 珊瑚扇 —— 它们是玩家可能故意保留的装饰，
-/// 要顶掉请用配置的 `extraReplaceable` 显式追加。
+// 可顶替物品类型表：投影打印机在 `onlyAir=false` 时允许覆盖这些方块。
+// 不收藤蔓 / 睡莲 / 甘蔗 / 珊瑚扇（它们是玩家可能故意保留的装饰），要顶掉请用配置的 `extraReplaceable` 显式追加。
 constexpr std::string_view kReplaceable[] = {
     "minecraft:short_grass",    "minecraft:grass",          "minecraft:tallgrass",
     "minecraft:fern",           "minecraft:large_fern",     "minecraft:double_plant",
@@ -82,20 +80,16 @@ constexpr std::string_view kReplaceable[] = {
 
 // ─────────────────────────── 潜影盒 ───────────────────────────
 //
-// 潜影盒是唯一「物品本身就装着东西」的方块，但它的内容**不在容器槽位里**：
-// 槽位上只有一个物品栈，东西放在该栈的 `mUserData`（物品 NBT）中。
+// 潜影盒的内容不在容器槽位里：槽位上只有一个物品栈，东西放在该栈的 `mUserData`（物品 NBT）中。
 //
-// 结构（实测 bds 1.21.132：物品栈完整 NBT 是 {Name,Count,Damage,Block,……,tag:{Items:[…]}}，
-// 而 `ItemStackBase::mUserData` 恰好对应 `tag` 那一层，所以 **userData 根层就是 Items**）：
-//   { Items: [ { Name: "minecraft:stone", Count: 5b, Damage: 0s, Slot: 0b }, ... ] }
-// 往根层写 Items 会被引擎丢弃、写进 tag.Items 才保留 —— 这条实测过，见 dogfood 记录。
-// 少数导出工具/附加包会按 Java 习惯包一层 `BlockEntityTag`，一并认下来。
-//
-// 全部实时解析，不缓存：盒子内容会被开盒、漏斗、其他插件随时改动。
+// 结构：{ Items: [ { Name: "minecraft:stone", Count: 5b, Damage: 0s, Slot: 0b }, ... ] }
+// 往根层写 Items 会被引擎丢弃、写进 tag.Items 才保留。
+// 少数导出工具/附加包会按 Java 习惯包一层 `BlockEntityTag`。
+// 全部实时解析。
 
 namespace {
 
-/// 潜影盒 NBT 里的内容列表（只读）。
+// 潜影盒 NBT 里的内容列表（只读）。
 ::ListTag const* containerItemsOf(::CompoundTag const* root) {
     if (root == nullptr) {
         return nullptr;
@@ -112,7 +106,7 @@ namespace {
     return nullptr;
 }
 
-/// 潜影盒 NBT 里的内容列表（可写）。
+// 潜影盒 NBT 里的内容列表（可写）。
 ::ListTag* mutableContainerItemsOf(::CompoundTag* root) {
     if (root == nullptr) {
         return nullptr;
@@ -138,7 +132,7 @@ namespace {
 
 ::CompoundTag* asMutableEntry(::UniqueTagPtr const& tag) { return const_cast<::CompoundTag*>(asEntry(tag)); }
 
-/// `Items` 里一项的方块 ID。基岩版字段名是 `Name`，个别工具会写成 `id`。
+// `Items` 里一项的方块 ID。基岩版字段名是 `Name`，个别工具会写成 `id`。
 std::string_view entryName(::CompoundTag const& entry) {
     if (entry.contains("Name", ::Tag::Type::String)) {
         return entry.at("Name").get<::StringTag>();
@@ -149,7 +143,7 @@ std::string_view entryName(::CompoundTag const& entry) {
     return {};
 }
 
-/// `Items` 里一项的数量。基岩版规范是 Byte，工具产物可能是 Short/Int，都读得下。
+// `Items` 里一项的数量。基岩版规范是 Byte，工具产物可能是 Short/Int，都读得下。
 int entryCount(::CompoundTag const& entry) {
     if (entry.contains("Count", ::Tag::Type::Byte)) {
         return static_cast<int>(entry.at("Count").get<::ByteTag>());
@@ -163,7 +157,7 @@ int entryCount(::CompoundTag const& entry) {
     return 0;
 }
 
-/// 这个物品栈是不是潜影盒。基岩版没有「容器物品」标记，按方块类型名匹配。
+// 这个物品栈是不是潜影盒。基岩版没有「容器物品」标记，按方块类型名匹配。
 bool isShulkerStack(::ItemStackBase const& stack) {
     if (stack.isNull() || stack.mCount == 0 || stack.mUserData == nullptr) {
         return false;
@@ -176,9 +170,9 @@ bool isShulkerStack(::ItemStackBase const& stack) {
     return type != nullptr && nameHas(type->getTypeName(), "shulker_box");
 }
 
-/// 从潜影盒里扣 `want` 个 `type`，返回实扣数量。
-///
-/// 在 `userData` 的**副本**上改，全部成功才整体写回：中途任何一步不成立都不会破坏原 NBT。
+// 从潜影盒里扣 `want` 个 `type`，返回实扣数量。
+//
+// 在 `userData` 的**副本**上改，全部成功才整体写回：中途任何一步不成立都不会破坏原 NBT。
 int takeFromContainer(::ItemStackBase& stack, ::BlockType const& type, int want) {
     if (want <= 0 || !isShulkerStack(stack)) {
         return 0;

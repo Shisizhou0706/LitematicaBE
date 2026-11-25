@@ -23,10 +23,8 @@ namespace {
 
 namespace util = litematicabe::util;
 
-/// XML 文本转义：`&` 必须最先换，否则会把后面造出来的实体再转一次。
-///
-/// 另外丢掉 XML 1.0 不允许的控制字符（0x00–0x1F，TAB/LF/CR 除外）：
-/// 方块的旧版名字里偶尔带残余字节，留着会让 Excel 报「文件已损坏」。
+// XML 文本转义：`&` 必须最先换，否则会把后面造出来的实体再转一次。
+// 另外丢掉 XML 1.0 不允许的控制字符（0x00–0x1F，TAB/LF/CR 除外）：方块的旧版名字里偶尔带残余字节，留着会让 Excel 报「文件已损坏」。
 std::string xmlEscape(std::string_view text) {
     std::string out;
     out.reserve(text.size() + 16);
@@ -59,7 +57,7 @@ std::string xmlEscape(std::string_view text) {
     return out;
 }
 
-/// 0 → "A"，25 → "Z"，26 → "AA"。
+// 0 → "A"，25 → "Z"，26 → "AA"。
 std::string columnName(std::size_t index) {
     std::string name;
     ++index;
@@ -71,7 +69,7 @@ std::string columnName(std::size_t index) {
     return name;
 }
 
-/// 定点小数（不走 locale：BDS 进程的 locale 不受本插件控制，`,` 小数点会写坏 xlsx）。
+// 定点小数（不走 locale：BDS 进程的 locale 不受本插件控制，`,` 小数点会写坏 xlsx）。
 std::string formatFixed(double value, int decimals) {
     bool negative = value < 0;
     if (negative) {
@@ -90,7 +88,7 @@ std::string formatFixed(double value, int decimals) {
     return negative ? "-" + digits : digits;
 }
 
-/// 单元格 → 样式表里的 xf 索引（与 `styles.xml` 的 `cellXfs` 一一对应）。
+// 单元格 → 样式表里的 xf 索引（与 `styles.xml` 的 `cellXfs` 一一对应）。
 std::size_t styleOf(Cell const& cell) {
     if (cell.kind == Cell::Kind::Number) {
         switch (cell.format) {
@@ -242,7 +240,7 @@ std::string sheetXml(Sheet const& sheet, std::string const& name) {
     return out;
 }
 
-/// `2026-11-24T02:07:28Z`（docProps 里要求 W3CDTF，必须 UTC）。
+// `2026-11-24T02:07:28Z`（docProps 里要求 W3CDTF，必须 UTC）。
 std::string isoNow() {
     auto const now    = std::chrono::system_clock::now();
     auto const time   = std::chrono::system_clock::to_time_t(now);
@@ -350,7 +348,7 @@ std::string workbookRelsXml(std::size_t sheetCount) {
     return out;
 }
 
-/// 表头（加粗 + 灰底 + 细框）、数字格式（千位整数 / 百分比）都靠这张表。
+// 表头（加粗 + 灰底 + 细框）、数字格式（千位整数 / 百分比）都靠这张表。
 std::string stylesXml() {
     static std::string const kStyles =
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
@@ -433,7 +431,7 @@ std::string appPropsXml(Workbook const& book) {
     return out;
 }
 
-/// 把 xml 片段按名字塞进 zip。
+// 把 xml 片段按名字塞进 zip。
 bool addEntry(mz_zip_archive& zip, char const* name, std::string const& data, std::string& error) {
     if (mz_zip_writer_add_mem(&zip, name, data.data(), data.size(), MZ_BEST_COMPRESSION) != MZ_TRUE) {
         auto const code = mz_zip_get_last_error(&zip);

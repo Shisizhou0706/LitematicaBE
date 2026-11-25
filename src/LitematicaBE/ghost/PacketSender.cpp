@@ -12,8 +12,8 @@ namespace litematicabe::ghost {
 
 namespace {
 
-/// 包头 = varint((packetId & 0x3FF) | (sender << 10) | (subclient << 12))。
-/// 本插件只发服务端包，sender/subclient 恒为 0。
+// 包头 = varint((packetId & 0x3FF) | (sender << 10) | (subclient << 12))。
+// 本插件只发服务端包，sender/subclient 恒为 0。
 constexpr std::uint32_t headerValue(std::uint32_t packetId) noexcept {
     return (packetId & 0x3FFu);
 }

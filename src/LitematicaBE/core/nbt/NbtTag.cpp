@@ -269,8 +269,8 @@ bool looksLikeGzip(std::uint8_t const* data, std::size_t size) {
     return size >= 2 && data[0] == 0x1F && data[1] == 0x8B;
 }
 
-/// gzip = 头（10 字节 + 可选字段）+ raw deflate + 8 字节 trailer。
-/// miniz 的 mz_inflateInit2 只认 zlib 头（15）或裸流（-15），所以这里自己跳过头。
+// gzip = 头（10 字节 + 可选字段）+ raw deflate + 8 字节 trailer。
+// miniz 的 mz_inflateInit2 只认 zlib 头（15）或裸流（-15），所以这里自己跳过头。
 bool gzipDecompress(std::string_view input, std::string& out) {
     auto const* p = reinterpret_cast<std::uint8_t const*>(input.data());
     auto const  n = input.size();

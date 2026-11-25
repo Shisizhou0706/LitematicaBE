@@ -15,7 +15,7 @@ namespace {
 namespace nb    = litematicabe::core::nbt;
 namespace store = litematicabe::core::save;
 
-/// 一条状态按原类型写成 NBT 子标签（类型错了结构方块会退回默认状态）。
+// 一条状态按原类型写成 NBT 子标签（类型错了结构方块会退回默认状态）。
 nb::TagPtr stateTag(store::StateValue const& state) {
     auto const type = static_cast<nb::TagType>(state.tagType);
     switch (type) {

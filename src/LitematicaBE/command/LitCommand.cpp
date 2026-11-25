@@ -30,7 +30,7 @@
 
 namespace litematicabe::command {
 
-/// 子命令；枚举成员名就是命令补全里的候选。
+// 子命令；枚举成员名就是命令补全里的候选。
 enum class LitAction : int {
     probe  = 0,
     info   = 1,
@@ -55,21 +55,10 @@ enum class LitAction : int {
     saveat    = 20,
     savediag  = 21,
     saveinfo  = 22,
-    material  = 23, ///< 当前选中投影的材料清单（导出 xlsx）
-    mat       = 24, ///< `material` 的简写
-    materials = 25, ///< `material` 的另一种写法
+    material  = 23, //< 当前选中投影的材料清单（导出 xlsx）
 };
 
-/// `/lit save <kind> <名字>` 的格式档位（枚举成员名就是补全候选）。
-///
-/// 用枚举而不是自由字符串：LL 的 string 参数会吃掉任意 token，
-/// 那会让 `/lit layer 1 2` 被误解析成 save 的 `(file="1", format="2")`。
-enum class SaveKindArg : int {
-    stru = 0, ///< `.mcstructure`（基岩结构文件）
-    lite = 1, ///< `.litematic`（Java / Litematica）
-    both = 2, ///< 两种都写（世界只扫描一遍）
-};
-
+// `/lit save <kind> <name>` 的格式段用字符串而不是枚举。
 struct LitParams {
     LitAction action;
 };
@@ -79,7 +68,7 @@ struct LitFileParams {
     std::string file;
 };
 
-/// `/lit load <file> <x> <y> <z>`：控制台也能指定原点铺设。
+// `/lit load <file> <x> <y> <z>`：控制台也能指定原点铺设。
 struct LitLoadAtParams {
     LitAction   action;
     std::string file;
@@ -88,42 +77,30 @@ struct LitLoadAtParams {
     int         z;
 };
 
-/// `/lit layer <from> <to>`：显示层区间。
+// `/lit layer <from> <to>`：显示层区间。
 struct LitLayerParams {
     LitAction action;
     int       from;
     int       to;
 };
 
-/// `/lit layer <from>`：只看单层。
+// `/lit layer <from>`：只看单层。
 struct LitLayerOneParams {
     LitAction action;
     int       from;
 };
 
-/// `/lit save <stru|lite|both> <名字>`：选区保存，格式必须显式给。
+// `/lit save <stru|lite|both> <名字>`：选区保存。
 struct LitSaveParams {
-    LitAction     action;
-    SaveKindArg   kind;
-    std::string   file;
-};
-
-/// `/lit saveat <stru|lite|both> <名字> <x1> <y1> <z1> <x2> <y2> <z2>`。
-struct LitSaveAtParams {
-    LitAction     action;
-    SaveKindArg   kind;
-    std::string   file;
-    int           x1;
-    int           y1;
-    int           z1;
-    int           x2;
-    int           y2;
-    int           z2;
-};
-
-/// `/lit saveat <名字> <x1> <y1> <z1> <x2> <y2> <z2>`：旧形式（不写格式 = `.mcstructure`）。
-struct LitSaveAtQuickParams {
     LitAction   action;
+    std::string kind; //< `stru` / `lite` / `both`（`parseFormat` 解析，含中文别名）
+    std::string file;
+};
+
+// `/lit saveat <stru|lite|both> <名字> <x1> <y1> <z1> <x2> <y2> <z2>`。
+struct LitSaveAtParams {
+    LitAction   action;
+    std::string kind;
     std::string file;
     int         x1;
     int         y1;
@@ -137,17 +114,9 @@ namespace {
 
 namespace util = litematicabe::util;
 
-/// 命令行格式档位 → 内部格式。
-core::save::Format formatOf(SaveKindArg kind) {
-    switch (kind) {
-    case SaveKindArg::lite:
-        return core::save::Format::Litematic;
-    case SaveKindArg::both:
-        return core::save::Format::Both;
-    case SaveKindArg::stru:
-    default:
-        return core::save::Format::Mcstructure;
-    }
+// 命令行格式段 → 内部格式。解析失败返回 nullopt（调用方报错，不静默兜底）。
+std::optional<core::save::Format> formatOf(std::string const& kind) {
+    return core::save::parseFormat(kind);
 }
 
 ::Player* playerOf(::CommandOrigin const& origin) {
@@ -158,8 +127,6 @@ core::save::Format formatOf(SaveKindArg kind) {
     return static_cast<::Player*>(actor);
 }
 
-/// 命令回调里任何异常都不能冒到引擎：BDS 只会打印 `command threw an exception`，
-/// 聊天栏什么都看不到，排查全靠日志。这里兜住并回报可读信息。
 template <class Fn>
 void guard(::CommandOutput& output, Fn&& body) noexcept {
     try {
@@ -171,7 +138,7 @@ void guard(::CommandOutput& output, Fn&& body) noexcept {
     }
 }
 
-/// `/lit share <on|off>` 的参数解析（也接受 true/false/1/0/开/关/共享/私有）。
+// `/lit share <on|off>` 的参数解析（也接受 true/false/1/0/开/关/共享/私有）。
 bool parseShareArg(std::string const& raw, bool& out) {
     std::string text;
     text.reserve(raw.size());
@@ -189,19 +156,17 @@ bool parseShareArg(std::string const& raw, bool& out) {
     return false;
 }
 
-/// 记下开关 + 立即按新可见性重发 / 收回，并把结果说给玩家听。
+// 记下开关 + 立即按新可见性重发 / 收回，并把结果返回报告。
 void applyShare(::CommandOutput& output, ::Player& player, bool shared) {
     auto const name = player.getRealName();
     ghost::share::setShared(name, shared);
     ghost::ProjectionManager::getInstance().applyShareChange(player, shared);
 
     if (shared) {
-        output.success("§b[投影共享]§r §a开§r：你放置的投影所有在线玩家都能看到");
-        output.success("    §7已显示的层立刻补发给全体；之后新 load 的投影同样共享§r");
+        output.success("§b[投影共享]§r §a开§r：当前投影已向全体玩家分享");
         return;
     }
-    output.success("§b[投影共享]§r §e关§r：只有你自己能看到你放置的投影（旁人屏幕上的已当场收回）");
-    output.success("    §7包围盒线框在私有模式下不显示（全局形状，没法按玩家隔离）；切层/补发/心跳也只发给你§r");
+    output.success("§b[投影共享]§r §e关§r：当前投影仅自己可见");
 }
 
 void runWithoutFile(::CommandOutput& output, ::CommandOrigin const& origin, LitAction action) {
@@ -232,7 +197,7 @@ void runWithoutFile(::CommandOutput& output, ::CommandOrigin const& origin, LitA
             return;
         }
         if (!easyplace::installed()) {
-            output.error("轻松放置：hook 没有挂上（详情见服务器日志）");
+            output.error("轻松放置：hook 没有挂载（详情见服务器日志）");
             return;
         }
         auto const name = player->getRealName();
@@ -242,8 +207,7 @@ void runWithoutFile(::CommandOutput& output, ::CommandOrigin const& origin, LitA
                 "§b[轻松放置]§r 已开启：在投影格上放错方块会直接落成投影要求的那一个（当前 {} 人在用）",
                 easyplace::enabledCount()
             );
-            output.success("    §7同类方块（如楼梯朝向）只改状态；不同种类会从背包扣 1 个对应方块，"
-                           "没有就阻止这次放置§r");
+            output.success("    §7方块自动纠正并扣除，缺少材料则阻止这次放置§r");
         } else {
             output.success(
                 "§b[轻松放置]§r 已关闭（当前 {} 人在用）",
@@ -317,15 +281,13 @@ void runWithoutFile(::CommandOutput& output, ::CommandOrigin const& origin, LitA
         return;
     }
     case LitAction::save:
-        output.error("用法：/lit save stru|lite|both <名字>（格式必须显式给）");
+        output.error("用法：/lit save stru|lite|both [名字]（不给名字时自动命名）");
         return;
     case LitAction::material:
-    case LitAction::mat:
-    case LitAction::materials:
         report::exportMaterials(output);
         return;
     case LitAction::saveat:
-        output.error("用法：/lit saveat [stru|lite|both] <名字> <x1> <y1> <z1> <x2> <y2> <z2>");
+        output.error("用法：/lit saveat stru|lite|both <名字> <x1> <y1> <z1> <x2> <y2> <z2>");
         return;
     case LitAction::box: {
         auto& wireframe = ghost::Wireframe::getInstance();
@@ -413,15 +375,26 @@ void runWithFile(
         output.error("用法：/lit sel [clear]（选点用手持木剑右键方块两次）");
         return;
     }
-    case LitAction::save:
-        output.error("格式必须显式给出：/lit save stru <名字> 或 /lit save lite <名字>（也可以 both）");
+    case LitAction::save: {
+        // `/lit save <stru|lite|both>`（不带名字）：格式词就是参数，名字交给自动命名。
+        if (auto const format = core::save::parseFormat(file); format) {
+            savetool::saveWithSelection(output, playerOf(origin), {}, *format);
+            return;
+        }
+        output.error("格式必须显式给：/lit save stru|lite|both <名字>（收到的是「{}」）", util::sanitizeUtf8(file));
         return;
+    }
     case LitAction::material:
-    case LitAction::mat:
-    case LitAction::materials:
         output.error(
             "材料清单统计的是「当前选中投影」：/lit material（不带参数）。"
             "要统计别的文件先 /lit load <file>，再用 /lit select <id> 选中"
+        );
+        return;
+    case LitAction::saveat:
+        output.error(
+            "saveat 需要显式格式与坐标：/lit saveat stru|lite|both <名字> <x1> <y1> <z1> <x2> <y2> <z2>"
+            "（收到的是「{}」）",
+            util::sanitizeUtf8(file)
         );
         return;
     default:
@@ -435,7 +408,6 @@ void runWithFile(
 void registerLitCommand() {
     auto& registrar = ll::command::CommandRegistrar::getInstance(false);
     registrar.tryRegisterEnum<LitAction>();
-    registrar.tryRegisterEnum<SaveKindArg>();
 
     auto& cmd = registrar.getOrCreateCommand("lit", "LitematicaBE 投影插件", ::CommandPermissionLevel::Any);
 
@@ -549,7 +521,15 @@ void registerLitCommand() {
                     output.error("只有 save 接受格式参数：/lit save stru|lite|both <名字>");
                     return;
                 }
-                savetool::saveWithSelection(output, playerOf(origin), params.file, formatOf(params.kind));
+                auto const format = formatOf(params.kind);
+                if (!format) {
+                    output.error(
+                        "不认识的格式「{}」：可用 stru|mcstructure|结构、lite|litematic|投影、both|双",
+                        util::sanitizeUtf8(params.kind)
+                    );
+                    return;
+                }
+                savetool::saveWithSelection(output, playerOf(origin), params.file, *format);
             });
         });
 
@@ -569,43 +549,19 @@ void registerLitCommand() {
                     output.error("只有 saveat 接受这段坐标参数");
                     return;
                 }
-                savetool::saveAt(
-                    output,
-                    playerOf(origin),
-                    params.file,
-                    formatOf(params.kind),
-                    params.x1,
-                    params.y1,
-                    params.z1,
-                    params.x2,
-                    params.y2,
-                    params.z2
-                );
-            });
-        });
-
-    cmd.overload<LitSaveAtQuickParams>()
-        .required("action")
-        .required("file")
-        .required("x1")
-        .required("y1")
-        .required("z1")
-        .required("x2")
-        .required("y2")
-        .required("z2")
-        .execute([](::CommandOrigin const& origin, ::CommandOutput& output, LitSaveAtQuickParams const& params) {
-            guard(output, [&] {
-                if (params.action != LitAction::saveat) {
-                    output.error("只有 saveat 接受这段坐标参数");
+                auto const format = formatOf(params.kind);
+                if (!format) {
+                    output.error(
+                        "不认识的格式「{}」：可用 stru|mcstructure|结构、lite|litematic|投影、both|双",
+                        util::sanitizeUtf8(params.kind)
+                    );
                     return;
                 }
-                // 不写格式 = 基岩结构文件（`.mcstructure`），回执里会写明。
-                output.success("§7未指定格式，按 stru（.mcstructure）保存§r");
                 savetool::saveAt(
                     output,
                     playerOf(origin),
                     params.file,
-                    core::save::Format::Mcstructure,
+                    *format,
                     params.x1,
                     params.y1,
                     params.z1,

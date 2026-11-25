@@ -41,28 +41,28 @@ namespace {
 
 namespace place = litematicabe::core::place;
 
-/// 开关按玩家名存：命令层拿到的只有名字，会话对象随时可能重生/换维度。
+// 开关按玩家名存：命令层拿到的只有名字，会话对象随时可能重生/换维度。
 std::unordered_set<std::string> gEnabled;
 
 Stats sStats{};
 
 // ─────────────────────────── 方块类型闸门 ───────────────────────────
 
-/// 「不该动的方块类型」判定已提取到 `core/place/PlaceGuard`（投影打印机共用同一套）。
-/// 这里只留一个薄包装，让调用点保持可读。
+// 「不该动的方块类型」判定已提取到 `core/place/PlaceGuard`（投影打印机共用同一套）。
+// 这里只留一个薄包装，让调用点保持可读。
 bool typeBlocked(::BlockType const& type) { return place::isRiskyType(type, place::RiskFilter{}); }
 
 // ─────────────────────────── 放置上下文 ───────────────────────────
 
-/// 一次 `Item::useOn` / `Player::useItem` 内的统计（同一次放置可能写多格）。
+// 一次 `Item::useOn` / `Player::useItem` 内的统计（同一次放置可能写多格）。
 struct Context {
     ::Player*          player{};
     int                slot{};
-    ::Item const*      carriedItem{}; ///< 放置前的物品（会计退款要用）
+    ::Item const*      carriedItem{}; // 放置前的物品（会计退款用）
     int                carriedAux{};
-    int                swaps{};       ///< 需要从背包扣料替换的格数
+    int                swaps{};       // 需要从背包扣料替换的格数
     ::BlockType const* targetType{};
-    /// 本次真正落下了真方块的格（决定「该格不再显示 ghost」）。
+    // 本次真正落下了真方块的格（决定「该格不再显示 ghost」）。
     std::vector<::BlockPos> filled;
 };
 
@@ -103,7 +103,7 @@ void notifyMissing(::Player& player, ::BlockType const& target) {
 // 物品判定/计数也移到了 `PlaceGuard`（投影打印机复用同一套「方块 ↔ 物品」判定）。
 using place::stackIsBlockType;
 
-/// 背包里有没有（除手持槽外）目标物品。
+// 背包里有没有（除手持槽外）目标物品。
 int countItemFor(::Player& player, ::BlockType const& type, int skipSlot) {
     return place::countBlockItem(player.getInventory(), type, skipSlot);
 }
@@ -114,8 +114,7 @@ void scheduleAccounting() {
     if (gFlushScheduled.exchange(true)) {
         return;
     }
-    // 等一个 tick 再结算：引擎扣减手持物品的时机在 `useOn` 之后，
-    // 这里让引擎先落完账，再按净额修正。
+    // 等一个 tick 再结算：引擎扣减手持物品的时机在 `useOn` 之后，这里让引擎先落完账，再按净额修正。
     ::ll::thread::ServerThreadExecutor::getDefault().executeAfter(
         []() {
             gFlushScheduled.store(false);
@@ -125,7 +124,7 @@ void scheduleAccounting() {
     );
 }
 
-/// 一个玩家的一次结算：先把错物品补回，再扣掉同等数量的目标方块物品。
+// 一个玩家的一次结算：先把错物品补回，再扣掉同等数量的目标方块物品。
 void settlePlayer(::Player& player, std::vector<Pending> const& items) {
     auto& inv     = player.getInventory();
     int   size    = inv.getContainerSize();
@@ -218,7 +217,7 @@ void runAccounting() {
     sStats.accountDropped += byPlayer.size();
 }
 
-/// 一次放置结束时：登记「这些格已经有真方块」，并把需要换料的记账入队。
+// 一次放置结束时：登记「这些格已经有真方块」，并把需要换料的记账入队。
 void flushContext() {
     // 先登记已填充格，ghost 层要据此停止覆盖它们。
     if (tCtx.player != nullptr) {
@@ -287,8 +286,7 @@ filterSetBlock(::BlockSource& source, ::BlockPos const& pos, ::Block const& inco
     // 手上物品本身会带来多格/实体这类副作用，不碰。
     if (typeBlocked(*incomingType) || typeBlocked(*targetType)) {
         ++sStats.riskySkipped;
-        // 放行意味着这一格会变成玩家放的方块（可能不是投影要求的），
-        // 服务端已经有真方块了，同样不能再拿 ghost 盖。
+        // 放行意味着这一格会变成玩家放的方块（可能不是投影要求的），服务端已经有真方块了，同样不能再拿 ghost 盖。
         ctx.filled.push_back(pos);
         return ghost::SetBlockVerdict::Pass;
     }
@@ -329,8 +327,11 @@ filterSetBlock(::BlockSource& source, ::BlockPos const& pos, ::Block const& inco
 
 namespace {
 
-// `Player::useItem` 覆盖「对空气使用物品」（吃/喝/扔），是附带上下文；
-// 方块放置真正走 `Item::useOn`（见下）。
+// 「使用物品」的观察回调（木剑开面板）。只读，不参与任何拦截判定。
+// 定义必须早于 `PlayerUseItemHook`（宏展开后函数体直接引用它）。
+UseItemObserver gUseItemObserver;
+
+// `Player::useItem` 覆盖「对空气使用物品」（吃/喝/扔），是附带上下文；方块放置真正走 `Item::useOn`（见下）。
 LL_TYPE_INSTANCE_HOOK(
     PlayerUseItemHook,
     ll::memory::HookPriority::Highest,
@@ -351,8 +352,7 @@ LL_TYPE_INSTANCE_HOOK(
     if (player != nullptr) {
         tCtx.player = player;
         tCtx.slot   = player->getSelectedItemSlot();
-        // `instance` 在某些服务端调用链里可能是空栈（或不是手上的那一栈），
-        // 那种情况下用 `getCarriedItem()` 兜底，否则物品会计会拿不到「被扣的是哪个物品」。
+        // `instance` 在某些服务端调用链里可能是空栈（或不是手上的那一栈），那种情况下用 `getCarriedItem()` 兜底，否则物品会计会拿不到「被扣的是哪个物品」。
         if (!instance.isNull()) {
             tCtx.carriedItem = instance.getItem();
             tCtx.carriedAux  = instance.mAuxValue;
@@ -367,13 +367,20 @@ LL_TYPE_INSTANCE_HOOK(
 
     origin(instance, method, consume);
 
+    // 观察者（木剑开面板）：只读，放在原逻辑之后，绝不影响物品消耗与放置会计。
+    if (player != nullptr) {
+        if (auto const& observer = gUseItemObserver; observer != nullptr) {
+            observer(*player, instance);
+        }
+    }
+
     flushContext();
     tCtx = saved;
 }
 
 ll::memory::HookRegistrar<PlayerUseItemHook> gUseItemHook;
 
-/// 「放置之前」的拦截回调（木剑选点）。只在服务端主线程读写，不加锁。
+// 「放置之前」的拦截回调（木剑选点）。只在服务端主线程读写，不加锁。
 UseOnInterceptor gInterceptor;
 
 // 方块放置链路：
@@ -382,8 +389,7 @@ UseOnInterceptor gInterceptor;
 //     → BlockItem::_useOn(...)       （inline）
 //     → BlockSource::setBlock(...)   ← 我们的 filter 在这里改写
 //
-// 只挂 `Player::useItem` 是不够的：那是「使用物品」的入口，
-// 玩家对着方块右键放置走的是 `Item::useOn`。
+// 只挂 `Player::useItem` 是不够的：那是「使用物品」的入口，玩家对着方块右键放置走的是 `Item::useOn`。
 // `Item::useOn` 参数里直接有 `Actor& entity` 和手上的 `ItemStack&`，是这个功能最准的锚点。
 LL_TYPE_INSTANCE_HOOK(
     ItemUseOnHook,
@@ -473,6 +479,8 @@ bool install() {
 
 void uninstall() {
     ghost::setBlockFilter(nullptr);
+    // 观察者/拦截器都要摘：hook 拆掉后它们不会再被调用，留着只会在下次 install 时误触发。
+    gUseItemObserver = nullptr;
     if (!gInstalled) {
         return;
     }
@@ -492,6 +500,10 @@ bool installed() { return gInstalled; }
 void setUseOnInterceptor(UseOnInterceptor fn) { gInterceptor = std::move(fn); }
 
 bool hasUseOnInterceptor() { return gInterceptor != nullptr; }
+
+void setUseItemObserver(UseItemObserver fn) { gUseItemObserver = std::move(fn); }
+
+bool hasUseItemObserver() { return gUseItemObserver != nullptr; }
 
 bool toggle(std::string const& playerName) {
     if (auto const it = gEnabled.find(playerName); it != gEnabled.end()) {

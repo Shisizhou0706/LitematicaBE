@@ -6,6 +6,7 @@
 #include "LitematicaBE/ghost/BlockHook.h"
 #include "LitematicaBE/ghost/DispatchQueue.h"
 #include "LitematicaBE/ghost/PacketSender.h"
+#include "LitematicaBE/ghost/ProjectionLimits.h"
 #include "LitematicaBE/ghost/ShareSwitch.h"
 #include "LitematicaBE/ghost/SurfaceCull.h"
 #include "LitematicaBE/ghost/Wireframe.h"
@@ -47,12 +48,13 @@ namespace {
 
 namespace util = litematicabe::util;
 
-constexpr std::size_t kMaxCollectBlocks = 400000;
+// 加载（收集）上限来自 `config/projection.json` 的 `maxLoadBlocks`：
+// 每次 `begin()` 现取一次，`/lit reload` 之后的下一次加载就是新值。
 
-/// 放置时的方块更新标志：0x1 通知邻居 + 0x2 同步到客户端。
+// 放置时的方块更新标志：0x1 通知邻居 + 0x2 同步到客户端。
 constexpr int kPlaceUpdateFlags = 3;
 
-/// 单次 `setBlock` 的等待窗口（挖掉后补 ghost / 放方块后压回真方块）。
+// 单次 `setBlock` 的等待窗口（挖掉后补 ghost / 放方块后压回真方块）。
 constexpr std::int64_t kRepaintDelayMs = 150;
 
 std::int64_t nowMs() {
@@ -103,9 +105,12 @@ bool ProjectionSession::begin(
     std::string firstBadId;
     bool        overflow = false;
 
+    // 本次加载的收集上限（config/projection.json 的 maxLoadBlocks）。
+    std::size_t const collectCap = limits::options().maxLoadBlocks;
+
     // 一份「方块 → 待发送项」的公共转换：两种文件格式共用，保证映射/状态串口径一致。
     auto pushBlock = [&](std::int32_t wx, std::int32_t wy, std::int32_t wz, core::schematic::BlockRef const& ref) -> bool {
-        if (pending.size() >= kMaxCollectBlocks) {
+        if (pending.size() >= collectCap) {
             overflow = true;
             return false;
         }
@@ -291,7 +296,11 @@ bool ProjectionSession::begin(
         output.error("状态串解析失败 {} 格，例：{}", idFailures, firstBadId);
     }
     if (overflow) {
-        output.error("投影超过收集上限 {} 格，只处理了前 {} 格", kMaxCollectBlocks, kMaxCollectBlocks);
+        output.error(
+            "投影超过收集上限 {} 格，只处理了前 {} 格（改 config/projection.json 的 maxLoadBlocks 可放宽）",
+            collectCap,
+            collectCap
+        );
     }
     return true;
 }
@@ -1220,8 +1229,10 @@ ProjectionSession::PlaceResult ProjectionSession::place(
         return left.z < right.z;
     });
 
-    auto const limit  = std::min(order.size(), options.maxBlocks);
-    auto&      placer = mapping::PlaceResolve::getInstance();
+    // 单次写入上限：PlaceOptions::maxBlocks 为 0 时跟随 config/projection.json 的 maxPlaceBlocks。
+    auto const placeCap = options.maxBlocks != 0 ? options.maxBlocks : limits::options().maxPlaceBlocks;
+    auto const limit    = std::min(order.size(), placeCap);
+    auto&      placer   = mapping::PlaceResolve::getInstance();
     placer.ensureLoaded();
 
     // ---- 区块预加载 ----
@@ -1438,9 +1449,10 @@ ProjectionSession::PlaceResult ProjectionSession::place(
     }
     if (result.pending > 0) {
         output.error(
-            "还有 {} 格超出单次上限 {}，用 /lit place <from> <to> 分层继续",
+            "还有 {} 格超出单次上限 {}，用 /lit place <from> <to> 分层继续"
+            "（上限改 config/projection.json 的 maxPlaceBlocks）",
             result.pending,
-            options.maxBlocks
+            placeCap
         );
     }
     return result;

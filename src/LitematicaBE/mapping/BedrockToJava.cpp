@@ -49,7 +49,7 @@ bool contains(std::string_view text, std::string_view needle) {
     return text.find(needle) != std::string_view::npos;
 }
 
-/// 基岩 `facing_direction`(0..5) → Java `facing` 值域。
+// 基岩 `facing_direction`(0..5) → Java `facing` 值域。
 std::string facingOf(int value) {
     switch (value) {
     case 0:
@@ -69,7 +69,7 @@ std::string facingOf(int value) {
     }
 }
 
-/// 基岩 `direction`(0..3) → Java 水平朝向（门/床/箱子/熔炉/中继器口径）。
+// 基岩 `direction`(0..3) → Java 水平朝向（门/床/箱子/熔炉/中继器口径）。
 std::string horizontalOf(int value) {
     switch (value & 3) {
     case 0:
@@ -83,7 +83,7 @@ std::string horizontalOf(int value) {
     }
 }
 
-/// 楼梯 `weirdo_direction` 的低两位 → Java `facing`。
+// 楼梯 `weirdo_direction` 的低两位 → Java `facing`。
 std::string stairFacingOf(int value) {
     switch (value & 3) {
     case 0:
@@ -97,11 +97,11 @@ std::string stairFacingOf(int value) {
     }
 }
 
-/// 活塞族 / 按钮的 `facing_direction`：与通用表**同名不同义**（水平四向整体相反）。
-///
-/// 依据（旧项目 `PistonFacing.js` 实测结论）：活塞与按钮在存档里
-/// `0=down 1=up 2=south 3=north 4=east 5=west`，而发射器/漏斗/熔炉等用通用表
-/// `2=north 3=south 4=west 5=east`。把两者搞混会让活塞水平朝向整体反 180°。
+// 活塞族 / 按钮的 `facing_direction`：与通用表**同名不同义**（水平四向整体相反）。
+//
+// 依据（旧项目 `PistonFacing.js` 实测结论）：活塞与按钮在存档里
+// `0=down 1=up 2=south 3=north 4=east 5=west`，而发射器/漏斗/熔炉等用通用表
+// `2=north 3=south 4=west 5=east`。把两者搞混会让活塞水平朝向整体反 180°。
 std::string pistonFacingOf(int value) {
     switch (value) {
     case 0:
@@ -125,7 +125,7 @@ bool isNumericText(std::string const& text) {
     return !text.empty() && (std::isdigit(static_cast<unsigned char>(text.front())) || text.front() == '-');
 }
 
-/// `facing_direction` 的值：数字走枚举表，字符串（观察者这类）原样透传。
+// `facing_direction` 的值：数字走枚举表，字符串（观察者这类）原样透传。
 std::string facingFromText(std::string const& text, bool pistonFamily) {
     if (!isNumericText(text)) {
         return text;
@@ -133,7 +133,7 @@ std::string facingFromText(std::string const& text, bool pistonFamily) {
     return pistonFamily ? pistonFacingOf(toInt(text)) : facingOf(toInt(text));
 }
 
-/// 拉杆 `lever_direction`(0..7) → Java `face` + `facing`。
+// 拉杆 `lever_direction`(0..7) → Java `face` + `facing`。
 void leverOf(int value, std::string& face, std::string& facing) {
     switch (value & 7) {
     case 0:
@@ -171,7 +171,7 @@ void leverOf(int value, std::string& face, std::string& facing) {
     }
 }
 
-/// 铁轨 `rail_direction`(0..9) → Java `shape`。
+// 铁轨 `rail_direction`(0..9) → Java `shape`。
 std::string railShapeOf(int value) {
     static char const* const kShapes[10] = {
         "north_south",
@@ -191,7 +191,7 @@ std::string railShapeOf(int value) {
     return kShapes[value];
 }
 
-/// 基岩专有、Java 侧没有对应属性的状态键：直接丢掉，不要透传成垃圾属性。
+// 基岩专有、Java 侧没有对应属性的状态键：直接丢掉，不要透传成垃圾属性。
 bool isBedrockOnlyKey(std::string_view key) {
     static std::unordered_set<std::string> const kKeys = {
         "stone_slab_type",
@@ -250,7 +250,7 @@ bool isBedrockOnlyKey(std::string_view key) {
 } // namespace
 
 struct BedrockToJava::Impl {
-    std::unordered_map<std::string, std::string> names; ///< 基岩裸名 → Java 全名
+    std::unordered_map<std::string, std::string> names; //< 基岩裸名 → Java 全名
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> stateMaps;
 };
 

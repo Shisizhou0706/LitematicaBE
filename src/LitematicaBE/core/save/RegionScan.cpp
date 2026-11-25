@@ -40,11 +40,11 @@ namespace {
 
 namespace nb = litematicabe::core::nbt;
 
-/// 基岩版世界高度：超出的 y 不去 `getBlock`（那些格按空气处理）。
+// 基岩版世界高度：超出的 y 不去 `getBlock`（那些格按空气处理）。
 constexpr std::int32_t kMinY = -64;
 constexpr std::int32_t kMaxY = 320;
 
-/// 诊断样例上限：够定位问题就行，不要刷屏。
+// 诊断样例上限：够定位问题就行，不要刷屏。
 constexpr std::size_t kMaxSamples = 6;
 
 std::string floatText(double value) {
@@ -53,8 +53,8 @@ std::string floatText(double value) {
     return buf;
 }
 
-/// 方块注册名。`BlockType::getTypeName()` 在不同版本里可能带/不带命名空间，
-/// 这里统一补成 `minecraft:xxx`，两种形态都能得到结构文件要的名字。
+// 方块注册名。`BlockType::getTypeName()` 在不同版本里可能带/不带命名空间，
+// 这里统一补成 `minecraft:xxx`，两种形态都能得到结构文件要的名字。
 std::string blockNameOf(::Block const& block) {
     std::string name = block.getTypeName();
     if (name.empty()) {
@@ -70,7 +70,7 @@ std::string blockNameOf(::Block const& block) {
     return name;
 }
 
-/// BDS 的 Tag → 本项目的 Tag 树（写方块实体 NBT 用）。
+// BDS 的 Tag → 本项目的 Tag 树（写方块实体 NBT 用）。
 nb::TagPtr convertTag(::Tag const& tag) {
     switch (tag.getId()) {
     case ::Tag::Byte:
@@ -134,7 +134,7 @@ nb::TagPtr convertTag(::Tag const& tag) {
     }
 }
 
-/// 调色板去重键：名字 + 状态（带类型，避免 Byte 1 与 Int 1 被合并）。
+// 调色板去重键：名字 + 状态（带类型，避免 Byte 1 与 Int 1 被合并）。
 std::string paletteKeyOf(PaletteSlot const& slot) {
     std::string key = slot.name;
     for (auto const& state : slot.states) {
@@ -148,7 +148,7 @@ std::string paletteKeyOf(PaletteSlot const& slot) {
     return key;
 }
 
-/// 方块实体：读出来转成本项目的 NBT 树；没有实体或读失败返回空。
+// 方块实体：读出来转成本项目的 NBT 树；没有实体或读失败返回空。
 nb::TagPtr readBlockEntity(::BlockSource& source, ::BlockPos const& pos, ScanStats& stats) {
     auto const* actor = source.getBlockEntity(pos);
     if (actor == nullptr) {

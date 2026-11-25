@@ -29,11 +29,11 @@ namespace {
 namespace rep = litematicabe::core::report;
 namespace util = litematicabe::util;
 
-/// 报表里「TOP 材料」最多列几项：聊天栏只适合一行，完整清单在 xlsx 里。
+// 报表里「TOP 材料」最多列几项：聊天栏只适合一行，完整清单在 xlsx 里。
 constexpr std::size_t kTopListed = 5;
 
-/// `exports` 里文件名的安全化：Windows 不允许 `\ / : * ? " < > |` 与控制字符，
-/// 也不允许以空格或点结尾。非 ASCII 字节原样保留（不会切坏 UTF-8）。
+// `exports` 里文件名的安全化：Windows 不允许 `\ / : * ? " < > |` 与控制字符，
+// 也不允许以空格或点结尾。非 ASCII 字节原样保留（不会切坏 UTF-8）。
 std::string sanitizeFileName(std::string name) {
     for (char& c : name) {
         switch (c) {
@@ -104,7 +104,7 @@ std::string layerRangeText(ghost::ProjectionSession::LayerRange range) {
          + " 层）";
 }
 
-/// 「材料清单」表：序号 / 方块名 / 变体 / 数量 / 占比 / 可放置 / 状态串样例。
+// 「材料清单」表：序号 / 方块名 / 变体 / 数量 / 占比 / 可放置 / 状态串样例。
 rep::Sheet buildMaterialSheet(rep::MaterialReport const& materials) {
     rep::Sheet sheet;
     sheet.name       = "材料清单";
@@ -150,7 +150,7 @@ rep::Sheet buildMaterialSheet(rep::MaterialReport const& materials) {
     return sheet;
 }
 
-/// 「投影信息」表：这份清单是从哪份投影、哪一层、什么时候统计出来的。
+// 「投影信息」表：这份清单是从哪份投影、哪一层、什么时候统计出来的。
 rep::Sheet buildInfoSheet(ghost::ProjectionSession const& session, rep::MaterialReport const& materials) {
     rep::Sheet sheet;
     sheet.name   = "投影信息";
@@ -187,7 +187,7 @@ rep::Sheet buildInfoSheet(ghost::ProjectionSession const& session, rep::Material
     return sheet;
 }
 
-/// 聊天栏那行 TOP 列表。
+// 聊天栏那行 TOP 列表。
 std::string describeTop(rep::MaterialReport const& materials) {
     std::string out;
     auto const  count = std::min(kTopListed, materials.items.size());

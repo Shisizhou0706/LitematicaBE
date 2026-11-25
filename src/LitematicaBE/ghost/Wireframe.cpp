@@ -14,10 +14,10 @@ namespace {
 
 using litematicabe::hologram::ShapeDrawer;
 
-/// 形状被"收起"时下移的距离（世界下方，客户端不会再画）。
+// 形状被"收起"时下移的距离（世界下方，客户端不会再画）。
 constexpr float kParkDistance = 512.0f;
 
-/// 逃生开关：设置环境变量 LITEMATICABE_NO_WIREFRAME=1 后完全停用线框。
+// 逃生开关：设置环境变量 LITEMATICABE_NO_WIREFRAME=1 后完全停用线框。
 bool wireframeDisabledByEnv() {
     static bool const disabled = [] {
         wchar_t value[8]{};
@@ -26,13 +26,23 @@ bool wireframeDisabledByEnv() {
     return disabled;
 }
 
+// 诊断日志开关：构建明细默认走 DEBUG（日志等级为 Info 时不输出）。
+// 排查「框画到哪了」时设 LITEMATICABE_WIREFRAME_LOG=1 恢复到 INFO。
+bool wireframeLogVerbose() {
+    static bool const verbose = [] {
+        wchar_t value[8]{};
+        return ::GetEnvironmentVariableW(L"LITEMATICABE_WIREFRAME_LOG", value, 8) > 0;
+    }();
+    return verbose;
+}
+
 struct Corner {
     float x;
     float y;
     float z;
 };
 
-/// 角点索引：bit0 = x(0/1)、bit1 = y(0/1)、bit2 = z(0/1)。
+// 角点索引：bit0 = x(0/1)、bit1 = y(0/1)、bit2 = z(0/1)。
 Corner cornerAt(float x1, float y1, float z1, float x2, float y2, float z2, unsigned index) {
     return Corner{
         (index & 1u) != 0 ? x2 : x1,
@@ -41,7 +51,7 @@ Corner cornerAt(float x1, float y1, float z1, float x2, float y2, float z2, unsi
     };
 }
 
-/// 12 条棱（角点对）：底面 4、顶面 4、竖棱 4。
+// 12 条棱（角点对）：底面 4、顶面 4、竖棱 4。
 constexpr unsigned kEdges[Wireframe::kEdgeCount][2] = {
     {0, 1},
     {1, 3},
@@ -59,8 +69,8 @@ constexpr unsigned kEdges[Wireframe::kEdgeCount][2] = {
 
 void drawLine(std::int64_t id, float r, float g, float b, float a) {
     auto& drawer = ShapeDrawer::getInstance();
-    drawer.setColor(id, r, g, b, a);
-    drawer.draw(id);
+    (void)drawer.setColor(id, r, g, b, a);
+    (void)drawer.draw(id);
 }
 
 } // namespace
@@ -111,16 +121,14 @@ void Wireframe::build(
         }
     }
 
+    // 默认降级到 DEBUG：日志等级为 Info(4) 的服务端看不到这行，线框行为不变。
     if (auto mod = ::ll::mod::NativeMod::current()) {
-        mod->getLogger().info(
-            "[wireframe] lines built: ({},{},{})-({},{},{})",
-            x1,
-            y1,
-            z1,
-            x2,
-            y2,
-            z2
-        );
+        auto& logger = mod->getLogger();
+        if (wireframeLogVerbose()) {
+            logger.info("[wireframe] lines built: ({},{},{})-({},{},{})", x1, y1, z1, x2, y2, z2);
+        } else {
+            logger.debug("[wireframe] lines built: ({},{},{})-({},{},{})", x1, y1, z1, x2, y2, z2);
+        }
     }
 }
 

@@ -34,6 +34,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <fstream>
 #include <string>
 #include <system_error>
@@ -76,7 +77,24 @@ std::string stripKnownExtension(std::string name) {
     return name;
 }
 
-/// 状态串：`name[k=v,k=v]`（`PlaceResolve` 与 `LitematicFile` 用的是同一套写法）。
+// 没给名字时自动起一个`sel_<yyyyMMdd-HHmmss>`（本地时间，纯 ASCII，不依赖选区坐标）。
+std::string autoSaveName() {
+    auto const now = std::chrono::system_clock::now();
+    auto const seconds = std::chrono::system_clock::to_time_t(now);
+    std::tm    local{};
+#ifdef _WIN32
+    ::localtime_s(&local, &seconds);
+#else
+    ::localtime_r(&seconds, &local);
+#endif
+    char buffer[64]{};
+    if (std::strftime(buffer, sizeof(buffer), "sel_%Y%m%d-%H%M%S", &local) == 0) {
+        return "sel";
+    }
+    return buffer;
+}
+
+// 状态串：`name[k=v,k=v]`（`PlaceResolve` 与 `LitematicFile` 用的是同一套写法）。
 std::string joinStateText(std::string const& name, mb::JavaStatePairs const& properties) {
     mb::StatePairs pairs;
     pairs.reserve(properties.size());
@@ -86,10 +104,8 @@ std::string joinStateText(std::string const& name, mb::JavaStatePairs const& pro
     return mb::buildStateText(name, pairs);
 }
 
-/// 回读自检：把刚写出的文件解析回来，逐格和世界的方块比 `mSerializationIdHash`。
-///
-/// 这是本功能唯一能自己证明「导出确实对」的手段：状态提取一旦退化
-/// （类型丢了、朝向翻了、调色板错位），这一项会立刻掉下来，而不是等玩家在 Litematica 里发现。
+// 回读自检：把刚写出的文件解析回来，逐格和世界的方块比 `mSerializationIdHash`。
+// 这是本功能唯一能自己证明「导出确实对」的手段：状态提取一旦退化（类型丢了、朝向翻了、调色板错位），这一项会立刻掉下来，而不是等玩家在 Litematica 里发现。
 void verifyFile(
     ::CommandOutput&             output,
     ::BlockSource&               source,
@@ -200,7 +216,7 @@ void verifyFile(
     }
 }
 
-/// 扫描结果 → Java 口径（`.litematic` 用）。
+// 扫描结果 → Java 口径（`.litematic` 用）。
 schematic::JavaRegion toJavaRegion(RegionScan const& scan) {
     schematic::JavaRegion region;
     region.sizeX       = scan.sizeX;
@@ -263,8 +279,7 @@ schematic::JavaRegion toJavaRegion(RegionScan const& scan) {
         return captured;
     }
 
-    // 控制台空服：维度表是唯一还活着的入口（`Level::getDimension` 在本服务端恒返回空，
-    // 但 `DimensionManager::mDimensions` 是实打实的容器）。
+    // 控制台空服：维度表是唯一还活着的入口（`Level::getDimension` 在本服务端恒返回空，但 `DimensionManager::mDimensions` 是实打实的容器）。
     {
         ::Dimension* first    = nullptr;
         ::Dimension* matching = nullptr;
@@ -326,9 +341,6 @@ std::string sanitizeName(std::string const& raw) {
     while (!cleaned.empty() && (cleaned.back() == ' ' || cleaned.back() == '.')) {
         cleaned.pop_back();
     }
-    if (cleaned.empty()) {
-        cleaned = "selection";
-    }
     return cleaned;
 }
 
@@ -378,10 +390,11 @@ bool saveSelection(
         return false;
     }
 
-    auto const name = sanitizeName(request.name);
+    auto name = sanitizeName(request.name);
     if (name.empty()) {
-        output.error("文件名不能为空");
-        return false;
+        // 命令里没给名字（`/lit save stru`）：自动起名，别让整个操作失败。
+        name = autoSaveName();
+        output.success("§7没有给文件名，自动命名为 {}§r", name);
     }
 
     // 选区记的是点选时的维度：玩家换维度后按「当前维度」读会静默导出一片错内容。
@@ -412,7 +425,7 @@ bool saveSelection(
         break;
     }
 
-    // 先查同名：overwrite=false 时一个都不写，绝不留下「一份新一份旧」的半成品。
+    // 先查同名：overwrite=false 时一个都不写，绝不留下一份新一份旧的半成品。
     std::error_code ec;
     for (auto const format : formats) {
         auto const path = targetPath(name, format);

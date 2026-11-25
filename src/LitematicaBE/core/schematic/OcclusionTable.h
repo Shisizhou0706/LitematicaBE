@@ -12,15 +12,13 @@
 
 namespace litematicabe::core::schematic {
 
-/// 遮挡判定表：回答「这个方块能不能遮住邻居的面」。
-///
-/// 数据在 `resources/data/occlusion.json`（`lit-tools occlusion` 生成），
-/// **C++ 里没有方块知识**：加方块/调判定只改表。
-///
-/// 规则优先级：
-///   1. `transparent` 里列出的名字 → 不遮挡（玻璃、楼梯、半砖、栅栏、门、树叶……）；
-///   2. `patterns.suffixes` / `patterns.contains` 命中 → 不遮挡（兜底新方块）；
-///   3. 其它 → 按 `defaultOccludes`（默认 true，即完整方块遮挡）。
+// 遮挡判定表：回答「这个方块能不能遮住邻居的面」。
+// 数据在 `resources/data/occlusion.json`（`lit-tools occlusion` 生成），C++ 里没有方块知识：加方块/调判定只改表。
+//
+// 规则优先级：
+//   1. `transparent` 里列出的名字 → 不遮挡（玻璃、楼梯、半砖、栅栏、门、树叶……）；
+//   2. `patterns.suffixes` / `patterns.contains` 命中 → 不遮挡（兜底新方块）；
+//   3. 其它 → 按 `defaultOccludes`（默认 true，即完整方块遮挡）。
 class OcclusionTable {
 public:
     static OcclusionTable& getInstance();
@@ -28,7 +26,7 @@ public:
     bool ensureLoaded();
     bool load(std::filesystem::path const& file);
 
-    /// true = 该 Java 方块遮挡相邻面。
+    // true = 该 Java 方块遮挡相邻面。
     bool occludes(std::string_view javaName);
 
     [[nodiscard]] bool loaded() const noexcept { return mLoaded; }

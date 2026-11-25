@@ -21,8 +21,8 @@ namespace util = litematicabe::util;
 
 using Json = nlohmann::json;
 
-/// 只存「私有」的玩家名：默认是全体共享，所以这个集合通常是空的。
-/// 全部在服务端主线程访问（命令回调 / 定时器），不需要额外加锁。
+// 只存「私有」的玩家名：默认是全体共享，所以这个集合通常是空的。
+// 全部在服务端主线程访问（命令回调 / 定时器），不需要额外加锁。
 std::unordered_set<std::string> gPrivate;
 
 constexpr char const* kConfigName = "share.json";

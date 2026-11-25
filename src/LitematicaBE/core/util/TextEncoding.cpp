@@ -51,8 +51,7 @@ std::string toNarrow(std::wstring const& text, UINT codePage) {
 std::string toUtf8(std::wstring const& text) { return toNarrow(text, CP_UTF8); }
 
 std::string toUtf8(std::filesystem::path const& path) {
-    // 走 wstring 而不是 u8string：文件名里有本地代码页无法映射的字符时，u8string()
-    // 在部分标准库实现上会抛异常，wstring() 永远不抛。
+    // 走 wstring 而不是 u8string：文件名里有本地代码页无法映射的字符时，u8string() 在部分标准库实现上会抛异常，wstring() 永远不抛。
     return toUtf8(path.wstring());
 }
 

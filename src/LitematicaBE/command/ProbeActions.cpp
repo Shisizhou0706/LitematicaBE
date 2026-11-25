@@ -158,8 +158,6 @@ void diagnose(::CommandOutput& output) {
             control
         );
         if (!dimension && rawPtr != nullptr) {
-            // 二进制布局同 shared_ptr：若 BDS 返回的是 shared_ptr 而我们按 weak 解释，
-            // 直接当 shared_ptr 读能把对象捞回来（计数会不准，但这里只读不持久化）。
             auto aliased = *reinterpret_cast<std::shared_ptr<::Dimension>*>(&weakRef);
             output.success("     按 shared_ptr 读：get={} use={}", (void*)aliased.get(), aliased.use_count());
             if (aliased) {

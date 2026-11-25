@@ -12,7 +12,7 @@ namespace litematicabe::core::nbt {
 
 namespace {
 
-/// 一层 NBT 写入器：只做「按字节序追加」，结构在 `writePayload` 里递归。
+// 一层 NBT 写入器：只做「按字节序追加」，结构在 `writePayload` 里递归。
 class Writer {
 public:
     explicit Writer(Endian endian) : mBig(endian == Endian::Big) {}
@@ -46,7 +46,7 @@ public:
         }
     }
 
-    /// NBT 的字符串是「u16 字节长度 + UTF-8 字节」。
+    // NBT 的字符串是「u16 字节长度 + UTF-8 字节」。
     void str(std::string const& value) {
         auto const length = static_cast<std::uint16_t>(value.size() > 0xFFFF ? 0xFFFF : value.size());
         u16(length);

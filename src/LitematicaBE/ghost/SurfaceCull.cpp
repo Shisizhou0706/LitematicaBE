@@ -10,7 +10,7 @@ namespace litematicabe::ghost {
 
 namespace {
 
-/// 21 位/轴：±1M 方块范围（投影远小于这个量级）。
+// 21 位/轴：±1M 方块范围（投影远小于这个量级）。
 constexpr std::uint64_t kMask = 0x1FFFFF;
 
 std::uint64_t packKey(std::int32_t x, std::int32_t y, std::int32_t z) noexcept {

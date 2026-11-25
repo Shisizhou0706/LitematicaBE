@@ -83,7 +83,7 @@ std::string urlDecode(std::string const& in) {
     return out;
 }
 
-/// 从 `/upload?token=xxx` 里取 token。
+// 从 `/upload?token=xxx` 里取 token。
 std::string queryValue(std::string const& target, std::string const& key) {
     auto const qmark = target.find('?');
     if (qmark == std::string::npos) {
@@ -237,7 +237,7 @@ void respondJson(SOCKET client, int status, json const& payload) {
     respond(client, status, "application/json; charset=utf-8", payload.dump());
 }
 
-/// 从 multipart/form-data 里取出 (filename, 文件内容)。
+// 从 multipart/form-data 里取出 (filename, 文件内容)。
 bool extractMultipart(
     std::string const& body,
     std::string const& contentType,
@@ -308,7 +308,7 @@ bool extractMultipart(
     return !filename.empty();
 }
 
-/// 只保留文件名本身，去掉路径与非法字符；扩展名必须是投影格式。
+// 只保留文件名本身，去掉路径与非法字符；扩展名必须是投影格式。
 bool sanitizeName(std::string name, std::string& out) {
     auto const slash = name.find_last_of("/\\");
     if (slash != std::string::npos) {
@@ -338,7 +338,7 @@ bool sanitizeName(std::string name, std::string& out) {
 
 std::filesystem::path utf8Path(std::string const& name) { return ::litematicabe::util::fromUtf8(name); }
 
-/// 只用于诊断：把前 n 个字节变成可打印预览。
+// 只用于诊断：把前 n 个字节变成可打印预览。
 std::string preview(std::string const& data, std::size_t n) {
     std::string out;
     out.reserve(n + 8);

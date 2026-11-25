@@ -20,7 +20,7 @@ constexpr char kEncodeSubchunkBlocks[]   = "holo_core_encode_update_subchunk_blo
 constexpr char kPacketIdSubchunkBlocks[] = "holo_core_packet_id_update_subchunk_blocks";
 constexpr char kHoloFree[]               = "holo_free";
 
-/// 尝试从指定模块解析三个符号；成功时填充 api 并返回模块名，否则返回 nullptr。
+// 尝试从指定模块解析三个符号；成功时填充 api 并返回模块名，否则返回 nullptr。
 char const* tryResolve(HMODULE module, BatchApi& api) {
     if (module == nullptr) {
         return nullptr;

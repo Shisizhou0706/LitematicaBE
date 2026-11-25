@@ -65,7 +65,7 @@ bool isColor(std::string_view word) {
     return false;
 }
 
-/// `white_bed` → `("white", "bed")`；没有颜色前缀时返回空对。
+// `white_bed` → `("white", "bed")`；没有颜色前缀时返回空对。
 std::pair<std::string_view, std::string_view> splitColor(std::string_view bare) {
     auto const pos = bare.find('_');
     if (pos == std::string_view::npos) {
@@ -78,7 +78,7 @@ std::pair<std::string_view, std::string_view> splitColor(std::string_view bare) 
     return {head, bare.substr(pos + 1)};
 }
 
-/// Bedrock 的 `facing_direction`：0=下 1=上 2=北 3=南 4=西 5=东。
+// Bedrock 的 `facing_direction`：0=下 1=上 2=北 3=南 4=西 5=东。
 std::string facingDirectionOf(std::string_view value) {
     if (value == "down") {
         return "0";
@@ -106,8 +106,8 @@ std::string_view bareKey(std::string_view key) {
     return pos == std::string_view::npos ? key : key.substr(pos + 1);
 }
 
-/// Bedrock 里这些状态是 bool（结构文件里存成 Byte 0/1），其余 `0/1` 是普通整数状态
-/// （比如 `facing_direction: 1` 表示「朝上」，不能当 bool 传）。
+// Bedrock 里这些状态是 bool（结构文件里存成 Byte 0/1），其余 `0/1` 是普通整数状态
+// （比如 `facing_direction: 1` 表示「朝上」，不能当 bool 传）。
 bool looksBoolState(std::string_view key) {
     auto const bare = bareKey(key);
     if (bare.size() > 4 && bare.substr(bare.size() - 4) == "_bit") {
@@ -148,7 +148,7 @@ bool looksBoolState(std::string_view key) {
 
 using StateVariants = std::vector<StatePairs>;
 
-/// 键去命名空间（结构文件里的裸键形态）。
+// 键去命名空间（结构文件里的裸键形态）。
 StatePairs keysBare(StatePairs const& in) {
     StatePairs out;
     out.reserve(in.size());
@@ -158,7 +158,7 @@ StatePairs keysBare(StatePairs const& in) {
     return out;
 }
 
-/// 键补 `minecraft:` 前缀（Bedrock 新式方块状态的形态）。
+// 键补 `minecraft:` 前缀（Bedrock 新式方块状态的形态）。
 StatePairs keysPrefixed(StatePairs const& in) {
     StatePairs out;
     out.reserve(in.size());
@@ -168,7 +168,7 @@ StatePairs keysPrefixed(StatePairs const& in) {
     return out;
 }
 
-/// bool 状态的值 `0/1` → `true/false`。
+// bool 状态的值 `0/1` → `true/false`。
 StatePairs withBoolValues(StatePairs const& in) {
     StatePairs out;
     out.reserve(in.size());
@@ -182,17 +182,17 @@ StatePairs withBoolValues(StatePairs const& in) {
     return out;
 }
 
-/// 同一份状态在不同方块/不同版本上有不同口径，逐套试到注册表接受为止。
-///
-/// 三步口径统一（缺一个就是「放下去但朝向丢了」）：
-/// 1. **族转换**：Java 状态先过 `convertJavaState`（楼梯→`weirdo_direction`、
-///    活塞→`facing_direction`、中继器→`minecraft:cardinal_direction`…），
-///    并丢掉 Java 独有键（`snowy`/`shape`/`type`/`waterlogged`）——
-///    留着它们会让方块 NBT 查询整条失败；
-/// 2. **值的类型**：结构文件里 bool 存成 Byte 0/1，必须转成 true/false，
-///    否则按 int 匹配类型不符；
-/// 3. **键的命名空间**：多数状态键是裸名（`upside_down_bit`），少数带前缀
-///    （`minecraft:cardinal_direction`），两种都试一遍。
+// 同一份状态在不同方块/不同版本上有不同口径，逐套试到注册表接受为止。
+//
+// 三步口径统一（缺一个就是「放下去但朝向丢了」）：
+// 1. **族转换**：Java 状态先过 `convertJavaState`（楼梯→`weirdo_direction`、
+//    活塞→`facing_direction`、中继器→`minecraft:cardinal_direction`…），
+//    并丢掉 Java 独有键（`snowy`/`shape`/`type`/`waterlogged`）——
+//    留着它们会让方块 NBT 查询整条失败；
+// 2. **值的类型**：结构文件里 bool 存成 Byte 0/1，必须转成 true/false，
+//    否则按 int 匹配类型不符；
+// 3. **键的命名空间**：多数状态键是裸名（`upside_down_bit`），少数带前缀
+//    （`minecraft:cardinal_direction`），两种都试一遍。
 StateVariants stateVariants(std::string_view bareName, StatePairs const& pairs, bool isBedrock) {
     StateVariants out;
     auto          add = [&](StatePairs states) {
@@ -253,7 +253,7 @@ bool readJsonFile(std::filesystem::path const& path, json& out, std::string& err
     }
 }
 
-/// 名字候选：越靠前越可信。
+// 名字候选：越靠前越可信。
 std::vector<std::string> buildCandidates(
     std::string const&                                   bare,
     std::unordered_map<std::string, std::string> const&  javaToBedrock,
@@ -429,13 +429,13 @@ PlaceResolve::Result PlaceResolve::resolve(std::string_view stateText, bool isBe
     auto const candidates = isBedrock ? std::vector<std::string>{bare} : buildCandidates(bare, mImpl->javaToBedrock, mImpl->bedrockNames);
     auto const variants   = stateVariants(bare, pairs, isBedrock);
 
-    /// 带状态查方块：**必须走方块 NBT**。
-    ///
-    /// `Block::tryGetFromRegistry(name, BlockStatesType)` 这个重载在本服务端上完全不看
-    /// 状态 —— 活塞传 `facing_direction=1`、`=up`、带不带命名空间，拿回来的
-    /// `mSerializationIdHash` 全部等于默认值，放下去朝向就丢了。
-    /// 实测（tools/diag）：改用 `tryGetFromRegistry(CompoundTag)` 且状态键**用裸名 +
-    /// 强类型**（int 写 int、bool 写 bool），hash 才会真的变。
+    // 带状态查方块：**必须走方块 NBT**。
+    //
+    // `Block::tryGetFromRegistry(name, BlockStatesType)` 这个重载在本服务端上完全不看
+    // 状态 —— 活塞传 `facing_direction=1`、`=up`、带不带命名空间，拿回来的
+    // `mSerializationIdHash` 全部等于默认值，放下去朝向就丢了。
+    // 实测（tools/diag）：改用 `tryGetFromRegistry(CompoundTag)` 且状态键**用裸名 +
+    // 强类型**（int 写 int、bool 写 bool），hash 才会真的变。
     auto lookup = [](std::string const& name, StatePairs const& states) -> ::Block const* {
         if (states.empty()) {
             auto const block = ::Block::tryGetFromRegistry(std::string_view{name});
@@ -467,10 +467,10 @@ PlaceResolve::Result PlaceResolve::resolve(std::string_view stateText, bool isBe
         return block ? block.operator->() : nullptr;
     };
 
-    /// 状态是否真的被注册表采纳。
-    /// `tryGetFromRegistry` 对不认识的状态**不报错**，而是返回默认状态的方块 —— 这正是
-    /// 「活塞朝向反了、楼梯上下颠倒」的根因，所以必须逐套变体验证。
-    /// 判据用 `mSerializationIdHash`（`mNetworkId` 是方块类型级的，同一方块所有状态共用一个值）。
+    // 状态是否真的被注册表采纳。
+    // `tryGetFromRegistry` 对不认识的状态**不报错**，而是返回默认状态的方块 —— 这正是
+    // 「活塞朝向反了、楼梯上下颠倒」的根因，所以必须逐套变体验证。
+    // 判据用 `mSerializationIdHash`（`mNetworkId` 是方块类型级的，同一方块所有状态共用一个值）。
     auto stateApplied = [&](std::string const& name, ::Block const& block, StatePairs const& variant) -> bool {
         // 转换后没有剩下任何状态（比如草方块只剩 Java 的 `snowy`，已被剔除）：
         // 这个方块本来就无状态可传，不算「未生效」。

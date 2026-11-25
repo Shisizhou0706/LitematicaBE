@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **面板一点按钮服务端就崩（0xC0000005，`_List_node_emplace_op2`）**：崩溃栈是
+  `表单回调 → MenuState::get → unordered_map::_Try_emplace`，`RDI = 0xE400000001`（垃圾指针）。
+  根因是线程竞争：表单回调来自**网络线程**，而 `summon()` 走主线程，两边同时在
+  `MenuState::mStates` 上插入 → MSVC `unordered_map` 的 list 节点指针被写坏。
+  现在：① 表单回调（含四个 CustomForm）一律投递回 `ServerThreadExecutor` 再执行，玩家按名字重查；
+  ② `AnimatePacket` hook 里**完全不碰玩家对象**，只把 `runtimeId` 这个 8 字节值带到主线程再解析实体；
+  ③ `MenuState` 的插入/删除加 `std::mutex` 兜底；④ 删掉只写不读的死字段 `showing`（那是跨线程写 `bool`）。
+- **木剑面板进不了二级菜单、且此后主菜单再也唤不出**：`SimpleForm` 点任意按钮客户端都会**立即关闭**表单再回响应，而 `deliver()` 当时把 `showing` 留在 true 并走 `sendUpdate` —— 已经没有活表单可更新，于是二级菜单打不开；`showing` 从此永远为 true，下一次唤出同样走 `sendUpdate`，主菜单也彻底出不来。现在回调第一件事就是 `showing = false`，并一律 `sendTo`。
+- **木剑面板第一版的 `Actor::swing` hook 会让服务端启动后崩溃（0xC0000005）**：`&::Actor::$swing` 能解析到符号、编译期检查也通过，但它指向的实体与 LeviLamina 头文件里的签名不一致，`origin()` 一进去就按错误调用约定读参数（崩在 `detour+0x23`，`mov r8, [r9+0x48]` / `R9=1`）。改用 `easyplace` 已经跑稳的 `Player::useItem` hook 加一个只读观察点（`setUseItemObserver`，与 `setUseOnInterceptor` 同一套做法），手势随之改为「手持木剑右键空气」。顺带确认：`EventBus` 的 `PlayerSwingEvent` 在这台服务器上确实没有 emitter，否则不会走到 hook 分支。
 - **打印出来的方块被挖掉后出现「客户端 ghost + 服务端真方块」叠加态**：挖掉触发的 ghost 补发有 150 ms 延迟，而打印机的 100 ms 节拍会在窗口内把该格重新填成真方块；补发逻辑当时不校验状态，于是 ghost 后到、盖住真方块 —— 客户端能穿过去（`lit:g_*` 的 `collision_box` 是 false），服务端却把玩家弹回来。现在补发前先看「该格是否已重新填充」（`isFilled`）并按每个玩家自己的维度确认该格仍是空气，不满足就不发。`requestRepaint` 同时记下破坏时间戳。
 - 打印机新增 `respectPlayerBreaks` / `playerBreakCooldownMs`（默认开、3 s）：玩家刚挖掉的格在冷却期内不补回，避免「挖掉 → 秒补回 → 反复触发 ghost 补发」，也避免玩家拆不掉打印区。
 - **`.litematic` 按大端 NBT 解析**：Litematica 是 Java 工具，NBT 为大端；此前按小端读导致「缺少 Regions」。解析器现在支持两种字节序（`.mcstructure` 的小端入口已预留），并用真实投影验证（`horse` 3739 格、`640核刷铁机` 32400 格、`天安门` 563 万格）。
@@ -20,15 +29,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`/lit replace` 改名为 `/lit place`，旧的 `/lit place`（只填空位）删除**：直接放置现在只有一条指令 `/lit place [from] [to]`，语义固定为**覆盖式**（目标位置已有非空气方块也照样写）。
 - **`/lit place` 新增使用门槛 `config/place.json`**：`requireAdmin`（需要管理员 / OP 身份，**默认关**）、`requireCreative`（需要创造模式，**默认开**）。判定在执行时（`core::place::checkAccess`），控制台不受这两条限制；改完 `/lit reload` 热重载，`/lit` 摘要会显示当前门槛。
+- **`[wireframe] lines built: (x1,y1,z1)-(x2,y2,z2)` 从 INFO 降为 DEBUG**：包围盒线框只要坐标或颜色变了就重建 12 条棱（`Wireframe::build`），原本每次无条件 `info`，于是切层、切共享、重开线框都会在控制台刷一行坐标。现在默认写 `debug`（日志等级为 Info 时静默），需要排查「框画到哪了」时设环境变量 `LITEMATICABE_WIREFRAME_LOG=1` 恢复 INFO；绘制、收起、`kParkDistance` 下移等行为一字未动。README 补上 `/lit box` 与 `LITEMATICABE_NO_WIREFRAME` / `LITEMATICABE_WIREFRAME_LOG` 两个开关的说明。
 
 ### Removed
 
 - **`/lit send` / `/lit batch`**：早期验证显示通道用的自检指令（脚下上方发一格假方块 / 发 5×5 平面）。通道自检已由 `/lit probe`（编码器 packetId、状态解析与映射样例）与 `/lit load`（真实投影）覆盖，故连同 `ProbeActions::sendOne` / `sendBatch`、`LitAction::send` / `batch` 一并删除。
 - `LitAction::replace` 枚举项及 `/lit place` 的「只填空位」分支。
 - **`/lit plan`**：早期用来在不写世界的前提下干跑统计放置结果的试跑指令，连同 `schematic::planProjection` 与 `LitAction::plan` 一并删除；放置统计现在直接看 `/lit place` 的回显（已放 / 跳过 / 解析失败 / 写失败 / 假成功）。
+- **同一功能的命令变体清理（每个功能只留一个入口）**：
+  - `/lit mat`、`/lit materials` 删除，只留 `/lit material`（`LitAction::mat` / `materials` 一并去掉）；
+  - `/lit savestru`、`/lit savelite`、`/lit saveboth` 删除，只留 `/lit save stru|lite|both [名字]`（不带名字仍自动命名；`LitAction::savestru` / `savelite` / `saveboth` 一并去掉）；
+  - `/lit saveat` 去掉「省略格式 = `.mcstructure`」的旧重载（`LitSaveAtQuickParams`）：格式与坐标必须一起给，`/lit saveat stru <名字> <x1> <y1> <z1> <x2> <y2> <z2>`。
+  - 木剑面板的「导出材料统计」「保存为 …」按钮直接调用 `report::exportMaterials()` / `savetool::saveWithSelection()`，**不经过命令字符串**，命令别名增删不影响面板、`docs/wooden-sword-ui.md` 与 `docs/selection-save.md` 已同步。
 
 ### Added
 
+- **投影的两处方块数上限改成配置项（`config/projection.json`）**：`maxLoadBlocks`（`/lit load` 的收集上限，默认 `400000`）、`maxPlaceBlocks`（`/lit place` 的单次写入上限，默认 `200000`）。此前分别是 `ghost/ProjectionSession.cpp` 里的 `kMaxCollectBlocks` 常量与 `PlaceOptions::maxBlocks` 的成员初始值 —— 大型投影放不下、小内存服又想调小，两头都只能改代码重编译。现在：① 新增 `ghost/ProjectionLimits`，照 `core::save::SaveConfig` 的写法（缺字段补默认、回写整份文件、`0` 与负数回落默认，防止负数转 `size_t` 变成天文数字）；② `ProjectionSession::begin()` 每次现取 `maxLoadBlocks`，`PlaceOptions::maxBlocks` 默认改为 `0` = 跟随配置（非 `0` 仍是调用方显式覆盖）；③ `/lit reload` 一起热重载并在回显里带出当前两值；④ 截断与超限的回显直接写明「改 `config/projection.json` 的哪个键」。
+
+- **木剑控制面板（`ui/`）**：木剑现在**只作为投影控制器**。手持木剑 **左键**（潜行与否都算）
+  唤出多级表单面板；**右键功能完全不变**（`selection/SwordTool` 的选点 / 潜行右键清空）。
+  命令仍然全部保留（面板是补充，不是替代）。
+  - 两条触发链路**同时**启用，靠 400 ms 冷却去重，不会重复弹两次：
+    1. `ServerNetworkHandler::$handle(AnimatePacket)` —— 客户端左键挥动的服务端锚点；
+    2. `easyplace` 的 `Player::useItem` 观察点 —— 「右键空气」兜底。
+    为什么必须兜底：LL 的 `HookRegistrar::hook()` 返回 `void`，符号解析失败时
+    **既不抛异常也不回报**，「没崩」不等于「挂上了」。
+  - 可自证：`triggerStats()` 把「收到的 Swing 包数」与「真正触发面板数」暴露到面板诊断页；
+    每个玩家第一次真正触发时还会在日志里留一条 `wooden sword gesture fired (via animate|useitem)`。
+    若 Swing 包计数一直是 0，说明该锚点在这台服务端收不到包，此时左键开面板不可用，
+    只能用右键空气。
+  - 动作推迟 50 ms 到下一拍执行：`$handle(AnimatePacket)` 在网络收包栈上，
+    直接在里面发 ghost 包 / 弹表单等于在收包路径里再发包。
+  - **面板树严格按 `木剑ui设计.txt` 实现**，12 页：
+    - *主菜单*：`LitematicaBE 4.0.0` / `选择一个操作` + 五个入口；
+    - *投影管理*：当前控制投影 + 每个会话一行（`#id 名称`、`N 格 · 归属：owner`）+ 加载新投影；
+    - *投影操作*：卸载 / 移除 / 选为当前控制 / 导出材料统计 / 重新加载；
+    - *新的投影*：列出 `schematics/` 下尚未加载的文件，点击即 `load`；
+    - *辅助功能*：轻松放置 / 打印机开关状态 + 当前投影 + 三个动作；
+    - *选区保存*：三种格式保存、按坐标保存、清空选区；
+    - *保存设置*：填名称（默认 `选区_MMDD_hhmm`，留空自动命名）；
+    - *坐标选区*：分别填起始点 / 结束点坐标，再选保存为哪种格式；
+    - *外观显示*：分享 / 包围盒开关状态 + 旋转 + 分层显示；
+    - *分层显示*：上一层 / 下一层 / 全部层 / 特定层；
+    - *显示特定层*：填起止层；
+    - *关于投影*：`LitematicaBE 4.0.0` / `重构正式版`。
+  - 每次翻页都是一次新的 `sendTo`：Bedrock 的 `SimpleForm` 点击即关闭表单，
+    `sendUpdate` 在这套交互里不成立。回调第一件事把 `showing` 清掉 ——
+    早期版本留着 true，导致翻页时面板消失、且此后再也唤不出来。
+  - 「上次结果」渲染在页顶：`CommandOutput` 收集层（`ui/ActionSink`）把现有动作函数的回显截下来
+    排版进面板，聊天栏不再刷屏；动作函数本身一行没改。
+  - 「重新加载」只重发该会话的当前显示层给本人（`ProjectionSession::sendCachedTo`），
+    不是 `/lit resend` 的全体重发；「导出材料统计」会先把目标会话 `select` 成当前再导出
+    （`/lit material` 只认当前选中）。
+  - 左键切层已移除：木剑定位为控制器，层控制改走面板按钮，
+    避免「打怪 / 挖方块也发 Swing」带来的误切层。
+- `ProjectionManager::forEachSession(fn)`：面板/诊断按 id 升序遍历会话，不必解析 `list()` 的文本。
+- `easyplace::setUseItemObserver()` / `hasUseItemObserver()`：`Player::useItem` 的只读观察点
+  （`origin()` 之后执行，不影响物品消耗与放置会计）。
 - **材料清单导出（`/lit material`，别名 `mat` / `materials`）**：把**当前选中**投影的方块按材料聚合，
   导出 `.xlsx` 到 `<模组目录>/exports/材料清单_<投影名>.xlsx`（同名覆盖），能力从旧 LSE 实现的
   `src/utils/MaterialCounter.js` 迁移。

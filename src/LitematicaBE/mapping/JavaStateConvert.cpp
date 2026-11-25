@@ -29,8 +29,8 @@ std::string_view get(StatePairs const& states, std::string_view key) {
 
 bool isTrue(std::string_view value) { return value == "true" || value == "1"; }
 
-/// 只存在于 Java、Bedrock 注册表里没有的状态键。命中即丢弃。
-/// 移植自旧项目 `BedrockStateSchema.JAVA_ONLY_KEYS`（真机踩坑清单）。
+// 只存在于 Java、Bedrock 注册表里没有的状态键。命中即丢弃。
+// 移植自旧项目 `BedrockStateSchema.JAVA_ONLY_KEYS`（真机踩坑清单）。
 bool isJavaOnlyKey(std::string_view key) {
     static std::unordered_set<std::string_view> const keys = {
         // 朝向 / 朝向族（各自族里会转成 Bedrock 的对应状态）
@@ -51,7 +51,7 @@ bool isJavaOnlyKey(std::string_view key) {
     return keys.contains(key);
 }
 
-/// Java 朝向 → Bedrock `facing_direction`（0=下 1=上 2=北 3=南 4=西 5=东）。
+// Java 朝向 → Bedrock `facing_direction`（0=下 1=上 2=北 3=南 4=西 5=东）。
 std::string facingDirection(std::string_view value) {
     if (value == "down") {
         return "0";
@@ -74,7 +74,7 @@ std::string facingDirection(std::string_view value) {
     return {};
 }
 
-/// 楼梯 `weirdo_direction`：0=东 1=西 2=南 3=北（再加 0x4 = 上下颠倒）。
+// 楼梯 `weirdo_direction`：0=东 1=西 2=南 3=北（再加 0x4 = 上下颠倒）。
 std::string stairsWeirdo(std::string_view facing) {
     if (facing == "east") {
         return "0";
@@ -91,12 +91,12 @@ std::string stairsWeirdo(std::string_view facing) {
     return {};
 }
 
-/// `direction` 整数状态（门/活板门/床/栅栏门共用的那个 BlockState）。
-///
-/// 序是实测出来的：`wooden_door` 上 `cardinal_direction=north` 与 `direction=2`
-/// 落到同一个 `mSerializationIdHash` → 0=south 1=west 2=north 3=east。
-/// 注意这**不是**楼梯 `weirdo_direction` 的序（那是 east/west/south/north），
-/// 也不是旧项目 JS 里那份 door 表（east0/south1/west2/north3，错的）。
+// `direction` 整数状态（门/活板门/床/栅栏门共用的那个 BlockState）。
+//
+// 序是实测出来的：`wooden_door` 上 `cardinal_direction=north` 与 `direction=2`
+// 落到同一个 `mSerializationIdHash` → 0=south 1=west 2=north 3=east。
+// 注意这**不是**楼梯 `weirdo_direction` 的序（那是 east/west/south/north），
+// 也不是旧项目 JS 里那份 door 表（east0/south1/west2/north3，错的）。
 std::string cardinalDirectionIndex(std::string_view facing) {
     if (facing == "south") {
         return "0";
@@ -113,7 +113,7 @@ std::string cardinalDirectionIndex(std::string_view facing) {
     return {};
 }
 
-/// 箱子/熔炉这一类 `facing_direction`：2=北 3=南 4=西 5=东（不含上下）。
+// 箱子/熔炉这一类 `facing_direction`：2=北 3=南 4=西 5=东（不含上下）。
 std::string horizontalFacing(std::string_view facing) {
     if (facing == "north") {
         return "2";
@@ -130,12 +130,12 @@ std::string horizontalFacing(std::string_view facing) {
     return {};
 }
 
-/// 把 Java 的布尔位写进 Bedrock 的 `*_bit` 键（bool 值）。
+// 把 Java 的布尔位写进 Bedrock 的 `*_bit` 键（bool 值）。
 void putBit(StatePairs& out, std::string_view bitKey, std::string_view javaValue) {
     out.emplace_back(std::string{bitKey}, isTrue(javaValue) ? "true" : "false");
 }
 
-/// Java 铁轨 `shape` → `rail_direction`。
+// Java 铁轨 `shape` → `rail_direction`。
 std::string railDirection(std::string_view shape, bool powered) {
     if (shape == "north_south") {
         return "0";

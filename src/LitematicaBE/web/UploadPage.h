@@ -2,8 +2,8 @@
 
 namespace litematicabe::web {
 
-/// 上传页（内嵌，无需外部文件）。
-/// 把 .litematic / .mcstructure 传到插件的 schematics/ 目录
+// 上传页（内嵌，无需外部文件）。
+// 把 .litematic / .mcstructure 传到插件的 schematics/ 目录
 inline constexpr char const* kUploadPage = R"HTML(<!doctype html>
 <html lang="zh-CN">
 <head>

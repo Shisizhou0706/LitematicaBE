@@ -20,8 +20,8 @@ std::int64_t nowMillis() {
         .count();
 }
 
-/// 位打包：每个 long 从低位开始塞，跨 long 时高位续到下一个 long 的低位。
-/// 与读端 `LitematicFile.cpp::readBits` 严格互补（同一份文件写→读必须逐格一致）。
+// 位打包：每个 long 从低位开始塞，跨 long 时高位续到下一个 long 的低位。
+// 与读端 `LitematicFile.cpp::readBits` 严格互补（同一份文件写→读必须逐格一致）。
 std::vector<std::uint64_t> packBits(std::vector<std::uint32_t> const& values, int bits) {
     auto const totalBits = static_cast<std::uint64_t>(values.size()) * static_cast<std::uint64_t>(bits);
     auto const longCount = static_cast<std::size_t>((totalBits + 63ull) / 64ull);
@@ -76,8 +76,7 @@ LitematicBuild buildLitematic(JavaRegion const& region, LitematicWriteOptions co
     auto const bits = bitsForPalette(region.palette.size());
     build.bitsPerBlock = bits;
 
-    // Litematica 的索引顺序：x 最快（`(y·sizeZ + z)·sizeX + x`）；
-    // 而扫描网格是 z 最快（`.mcstructure` 口径）。这里做一次重排，别让两份格式共用一套错顺序。
+    // Litematica 的索引顺序：x 最快（`(y·sizeZ + z)·sizeX + x`）；而扫描网格是 z 最快（`.mcstructure` 口径）。这里做一次重排，别让两份格式共用一套错顺序。
     std::vector<std::uint32_t> ordered;
     ordered.reserve(static_cast<std::size_t>(volume));
     auto const sy = static_cast<std::uint64_t>(region.sizeY);
@@ -136,8 +135,7 @@ LitematicBuild buildLitematic(JavaRegion const& region, LitematicWriteOptions co
     nb::put(*regionTag, "Size", intVec3(region.sizeX, region.sizeY, region.sizeZ));
     nb::put(*regionTag, "BlockStatePalette", std::move(palette));
     nb::put(*regionTag, "BlockStates", nb::makeLongArray(blockStates));
-    // 方块实体：`.litematic` 的 TileEntities 要 Java 的方块实体 id 与字段，
-    // 与基岩的 BlockActor NBT 不是一套东西 —— 首版留空（.mcstructure 侧已完整写入）。
+    // 方块实体：`.litematic` 的 TileEntities 要 Java 的方块实体 id 与字段，与基岩的 BlockActor NBT 不是一套东西 —— 首版留空（.mcstructure 侧已完整写入）。
     nb::put(*regionTag, "TileEntities", nb::makeList(nb::TagType::Compound));
     nb::put(*regionTag, "Entities", nb::makeList(nb::TagType::Compound));
 
